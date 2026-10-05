@@ -90,12 +90,21 @@ def _takes_host(step: Step) -> bool:
     return any("{host}" in text or "{hostport}" in text for text in (*step.command, *step.env.values()))
 
 
+def step_name(step: Step, fallback: str) -> str:
+    """What a step runs, with no template left in: `helper/shim.py`, `autojev.server`, `kev.serve`, `ollama`."""
+    for part in step.command:
+        name = part.removeprefix("{snapshot}/")
+        if name and not name.startswith("-") and "{" not in name:
+            return name
+    return fallback
+
+
 def check_launchable(spec: ModelSpec, host: str, port: int) -> None:
     """Refuse a URL host the upstream cannot listen on, before anything starts, instead of probing the wrong address."""
     for step in spec.launch:
         if (step.port or port) != port or host == LOCAL_HOST:
             continue
-        program = step.command[0] if step.command else spec.id
+        program = step_name(step, spec.id)
         fix = f"Set {spec.url_env} to http://{LOCAL_HOST}:{port}, or start the upstream yourself and drop --launch."
         if not _takes_host(step):
             raise BackendUnavailable(f"{spec.id}: {program} cannot be told to listen on {host}, only on {LOCAL_HOST}. {fix}")

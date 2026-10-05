@@ -148,8 +148,9 @@ def test_catalog_ipv6_support_matches_each_upstream(monkeypatch):
         monkeypatch.setenv(BY_ID[model].url_env, "http://[::1]:9001")
     for model in ("kev-4b", "pplx-decider-v1-27b"):  # uvicorn-based: --host / AUTOJEV_HOST
         check_launchable(BY_ID[model], *launch_address(BY_ID[model]))
-    with pytest.raises(BackendUnavailable, match="IPv4 only"):  # the OpenJev shim's ThreadingHTTPServer
-        check_launchable(BY_ID["openjev"], *launch_address(BY_ID["openjev"]))
+    with pytest.raises(BackendUnavailable, match="^openjev: helper/shim.py listens on IPv4 only") as refused:
+        check_launchable(BY_ID["openjev"], *launch_address(BY_ID["openjev"]))  # the shim's ThreadingHTTPServer
+    assert "{" not in str(refused.value)  # the step is named, not its unrendered template
 
 
 @pytest.mark.parametrize("restore", [True, False])
