@@ -135,3 +135,44 @@ def test_models_survives_a_package_that_crashes_on_import(capsys, monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", crash)
     assert cli.main(["models"]) == 0
     assert all(m["extra_installed"] is False for m in json.loads(capsys.readouterr().out)["models"] if m["extra"])
+
+
+SECRETS = {"TYPESAFE_API_KEY": "dummy-ts-key-123", "SYSTEMONE_SERVE_API_KEY": "dummy-serve-key-456",
+           "TOGETHER_API_KEY": "dummy-together-key-789"}
+LEAKY = "upstream said: keys dummy-ts-key-123 dummy-serve-key-456 dummy-together-key-789, Authorization: Bearer tok-abc.DEF"
+
+
+def assert_scrubbed(text: str) -> None:
+    for value in [*SECRETS.values(), "tok-abc.DEF"]:
+        assert value not in text
+    assert "Bearer ***" in text
+
+
+def test_cli_bug_traceback_is_scrubbed(capsys, monkeypatch):
+    for name, value in SECRETS.items():
+        monkeypatch.setenv(name, value)
+
+    def broken(args):
+        raise RuntimeError(LEAKY)
+
+    monkeypatch.setattr(cli, "cmd_models", broken)
+    assert cli.main(["models"]) == 1
+    captured = capsys.readouterr()
+    assert "Traceback" in captured.err and "RuntimeError" in captured.err
+    assert_scrubbed(captured.err)
+    assert_scrubbed(captured.out)
+
+
+def test_server_bug_traceback_is_scrubbed(caplog, monkeypatch):
+    for name, value in SECRETS.items():
+        monkeypatch.setenv(name, value)
+    router = Router(specs=[], backends={})
+    monkeypatch.setattr(router, "evaluate", lambda body: (_ for _ in ()).throw(RuntimeError(LEAKY)))
+    http = TestClient(create_app(router, api_key=""), raise_server_exceptions=False)
+    with caplog.at_level("ERROR"):
+        reply = http.post("/v1/systemone", json={**CHOICE, "model": "m"})
+    assert reply.status_code == 500 and reply.json()["error"]["code"] == "internal_error"
+    assert_scrubbed(reply.text)
+    assert "Traceback" in caplog.text and "RuntimeError" in caplog.text
+    assert_scrubbed(caplog.text)
+    assert all(record.exc_info is None for record in caplog.records)  # no handler can re-render the raw exception

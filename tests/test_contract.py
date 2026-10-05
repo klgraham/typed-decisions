@@ -49,11 +49,16 @@ def test_a_valid_answer_passes_unchanged(body):
     (respond({"extra": {"type": "noul", "noul": 0.5}}), "not asked: extra"),
     (respond({"is_urgent": None}), "no answer for is_urgent"),
     (respond(usage={}), "outside the System One contract"),
-    (respond(usage={"input_tokens": -1, "output_tokens": 0}), "non-negative integers"),
+    (respond(usage={"input_tokens": -1, "output_tokens": 0}), "non-negative whole numbers"),
+    (respond(usage={"input_tokens": 1.5, "output_tokens": 0}), "outside the System One contract"),
+    (respond(usage={"input_tokens": "12", "output_tokens": 0}), "non-negative whole numbers"),
     (respond({"department": {"type": "noul", "noul": 0.3}}), "'noul' answer to a 'choice' question"),
     (respond({"department": {**GOOD["department"], "choice": "zzz"}}), "choice 'zzz' is not one of"),
     (respond({"department": {**GOOD["department"], "confidence": 3.0}}), "confidence must be"),
-    (respond({"department": {**GOOD["department"], "probabilities": {"billing": 1.0}}}), "keyed by exactly"),
+    (respond({"department": {**GOOD["department"], "probabilities": {"billing": 0.9, "refunds": 0.1}}}),
+     "options that do not exist: \\['refunds'\\]"),
+    (respond({"department": {**GOOD["department"], "probabilities": {"billing": 0.9, "technical": 0.9}}}), "sum to 1.8000"),
+    (respond({"department": {**GOOD["department"], "probabilities": ["billing"]}}), "outside the System One contract"),
     (respond({"department": {**GOOD["department"], "probabilities": {"billing": 2.0, "technical": 0, "sales": 0}}}),
      "every probability"),
     (respond({"frustration": {**GOOD["frustration"], "score": 2.5}}), "score must be a number in \\[0, 2\\]"),
@@ -64,6 +69,20 @@ def test_a_valid_answer_passes_unchanged(body):
 def test_off_contract_answers_are_backend_failures(body, response, message):
     with pytest.raises(BackendFailed, match=message):
         evaluate(response, body)
+
+
+@pytest.mark.parametrize("response", [
+    # Ollama tev1 reads the top 5 logprobs, so options can be missing; Jev rounds to 2 decimals, so sums can pass 1.
+    respond({"department": {**GOOD["department"], "probabilities": {"billing": 0.8}}}),
+    respond({"department": {**GOOD["department"], "probabilities": {}}}),
+    respond({"department": {**GOOD["department"], "probabilities": {"billing": 0.34, "technical": 0.34, "sales": 0.34}}}),
+    respond({"frustration": {**GOOD["frustration"], "probabilities": {"1": 0.7, "2": 0.3}}}),
+    respond({"department": {**GOOD["department"], "confidence": 0.75}}),  # confidence need not equal the top probability
+    respond(usage={"input_tokens": 12.0, "output_tokens": 3}),  # a whole number, as the wire schema accepts
+    respond(usage={"input_tokens": 12, "output_tokens": 3, "cached_tokens": 4}),
+])
+def test_answers_the_spec_allows_pass(body, response):
+    assert evaluate(response, body) == response
 
 
 def test_proxied_upstream_answers_are_checked_too(body):
