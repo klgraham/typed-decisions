@@ -46,6 +46,7 @@ class ModelSpec:
     auth_env: str | None = None
     launch: tuple[Step, ...] = ()
     notes: str = ""
+    explicit: tuple[str, ...] = ()  # fields given on the command line (`--upstream`); env vars do not override them
 
     def _env(self, suffix: str) -> str:
         return "SYSTEMONE_" + re.sub(r"[^A-Z0-9]+", "_", self.id.upper()).strip("_") + "_" + suffix
@@ -60,9 +61,20 @@ class ModelSpec:
         return self._env("MODEL")
 
     def resolved_url(self) -> str | None:
+        """Precedence: the command line, then SYSTEMONE_<ID>_URL, then the catalog default."""
+        if "url" in self.explicit:
+            return self.url
         return os.environ.get(self.url_env, "").strip() or self.url
 
+    def url_source(self) -> str:
+        if "url" in self.explicit:
+            return "--upstream"
+        return self.url_env if os.environ.get(self.url_env, "").strip() else "the catalog default"
+
     def resolved_model(self) -> str | None:
+        """Precedence: the command line, then SYSTEMONE_<ID>_MODEL, then the catalog default."""
+        if "upstream_model" in self.explicit:
+            return self.upstream_model
         return os.environ.get(self.model_env, "").strip() or self.upstream_model
 
 

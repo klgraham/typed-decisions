@@ -34,10 +34,13 @@ def upstream_spec(name: str, target: str) -> ModelSpec:
     """A catalog entry for any other System One server (Jeeves, Ollama's nimble, a remote Kev).
 
     `target` is `URL` or `URL#MODEL`; MODEL is the name the upstream expects, defaulting to the request's model.
+    What the command line gives wins over SYSTEMONE_<NAME>_URL and SYSTEMONE_<NAME>_MODEL; a MODEL left out can
+    still come from SYSTEMONE_<NAME>_MODEL.
     """
     url, _, model = target.partition("#")
     return ModelSpec(id=name, kind="systemone-http", title=f"{name} at {url}", license="see upstream",
-                     stack="any System One server", hardware="upstream", url=url.rstrip("/"), upstream_model=model or None)
+                     stack="any System One server", hardware="upstream", url=url.rstrip("/"), upstream_model=model or None,
+                     explicit=("url", "upstream_model") if model else ("url",))
 
 
 class Router:

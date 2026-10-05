@@ -148,3 +148,25 @@ def test_bad_arguments_exit_2(capsys):
     with pytest.raises(SystemExit) as raised:
         main(["compare", "x.json"])
     assert raised.value.code == 2
+
+
+def test_an_explicit_upstream_wins_over_its_env_vars(monkeypatch):
+    from systemone_serve.cli import build_router
+
+    monkeypatch.setenv("SYSTEMONE_ADHOC_URL", "http://env-host:9999")
+    monkeypatch.setenv("SYSTEMONE_ADHOC_MODEL", "env-model")
+    spec = build_router(["adhoc=http://127.0.0.1:7777#cli-model"]).specs["adhoc"]
+    assert (spec.resolved_url(), spec.resolved_model(), spec.url_source()) == ("http://127.0.0.1:7777", "cli-model",
+                                                                                "--upstream")
+    spec = build_router(["adhoc=http://127.0.0.1:7777"]).specs["adhoc"]  # no #MODEL: the env var, then the request's
+    assert (spec.resolved_url(), spec.resolved_model()) == ("http://127.0.0.1:7777", "env-model")
+    monkeypatch.delenv("SYSTEMONE_ADHOC_MODEL")
+    assert build_router(["adhoc=http://127.0.0.1:7777"]).specs["adhoc"].resolved_model() is None
+
+
+def test_an_explicit_upstream_is_used_even_when_its_env_vars_point_elsewhere(capsys, body_file, running_router, monkeypatch):
+    monkeypatch.setenv("SYSTEMONE_JEEVES_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("SYSTEMONE_JEEVES_MODEL", "not-this-one")
+    code, out = run(capsys, "ask", str(body_file), "--model", "jeeves",
+                    "--upstream", f"jeeves={running_router}#uniform-baseline")
+    assert code == 0 and (out["model"], out["upstream_model"]) == ("jeeves", "uniform-baseline")
