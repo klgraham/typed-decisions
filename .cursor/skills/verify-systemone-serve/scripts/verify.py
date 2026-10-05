@@ -27,7 +27,11 @@ REPO = Path(os.environ.get("VERIFY_REPO") or HERE.parents[4]).resolve()
 SKILL = "verify-systemone-serve"
 SCRATCH_ROOT = Path(os.environ.get("TMPDIR", "/tmp")) / SKILL
 ARTIFACT_ROOT = Path(os.environ.get("VERIFY_ARTIFACTS") or REPO / ".verify-artifacts" / SKILL)
-DROP = ("TYPESAFE_BASE_URL", "TOGETHER_MODEL", "SHIM_TOKEN", "HF_TOKEN", "SYSTEMONE_SERVE_API_KEY")
+# Launched processes get only these from the agent env (plus LC_*), then whatever a step passes with --env.
+ENV_ALLOW = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ", "TERM", "TMPDIR")
+SECRET_NAME = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL", re.IGNORECASE)  # for run.json names only
+# Every request the helper makes is to 127.0.0.1: never through http_proxy/HTTP_PROXY/ALL_PROXY.
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 PROBE_HEADER = "x-verify-probe"  # marks the helper's own readiness/doctor requests
 STOP_WAIT = 20.0  # serve's own bound is 5 s grace + 2 s stuck requests (+ launched upstreams)
 
@@ -83,8 +87,9 @@ def free_port(state: dict) -> int:
 
 
 def child_env(extra: list[str]) -> dict:
-    env = {k: v for k, v in os.environ.items() if not (
-        k.endswith("_API_KEY") or k in DROP or (k.startswith("SYSTEMONE_") and k.endswith(("_URL", "_MODEL"))))}
+    """An allowlist, not a denylist: no key or token (GITHUB_TOKEN included), no SYSTEMONE_* override, and no proxy
+    variable (sys1's HTTP client honours them too, and all traffic here is loopback) reaches what the helper starts."""
+    env = {k: v for k, v in os.environ.items() if k in ENV_ALLOW or k.startswith("LC_")}
     for item in extra:
         key, _, value = item.partition("=")
         env[key] = value
@@ -124,13 +129,15 @@ def checks(exprs: list[str], scope: dict) -> list[dict]:
 
 
 def alive(pid: int) -> bool:
+    """Running (a zombie counts as gone: its parent may be dead and nobody left to reap it)."""
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return not state.stdout.strip().startswith("Z")
 
 
 def command_of(pid: int) -> str:
@@ -141,15 +148,16 @@ def command_of(pid: int) -> str:
 def ours(inst: dict) -> bool:
     """The recorded pid is still the `sys1 serve` (or tap) this run started (pids get reused)."""
     command = command_of(inst["pid"])
+    words, port = command.split(), str(inst["port"])
     if inst.get("kind") == "tap":
-        return "verify.py _tap" in command and f" {inst['port']} " in f"{command} "
-    return "systemone_serve.cli serve" in command and f"--port {inst['port']}" in command
+        return "verify.py _tap" in command and port in words
+    return "systemone_serve.cli serve" in command and f" --port {port} " in f" {' '.join(words)} "  # whole tokens
 
 
 def http_get(url: str, timeout: float = 2.0) -> tuple[int, str]:
     try:
         probe = urllib.request.Request(url, headers={PROBE_HEADER: "1"})  # taps do not record these
-        with urllib.request.urlopen(probe, timeout=timeout) as reply:
+        with OPENER.open(probe, timeout=timeout) as reply:
             return reply.status, reply.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
         return error.code, error.read().decode("utf-8", "replace")
@@ -183,7 +191,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     meta = {"run_id": rid, "repo": str(REPO), "git_head": git.stdout.strip() or "not a git checkout",
             "git_dirty_files": len(dirty.stdout.splitlines()) if git.returncode == 0 else None,
             "package": pkg, "python": python(), "scratch": str(scratch()), "evidence": str(evidence()),
-            "keys_in_agent_env": sorted(k for k in os.environ if k.endswith("_API_KEY")),  # names only, never values
+            "secret_like_names_in_agent_env": sorted(k for k in os.environ if SECRET_NAME.search(k)),  # never values
             "started": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
     (evidence() / "run.json").write_text(json.dumps(meta, indent=2))
     save_state({"instances": {}, "ports": [], "order": []})
@@ -253,7 +261,8 @@ def _start(state: dict, name: str, kind: str, port: int, cmd: list[str], env: di
 
 def cmd_tap(args: argparse.Namespace) -> None:
     """A recording reverse proxy in front of instance TO: every request it gets (method, path, headers, body) is
-    appended to evidence/instances/NAME.requests.jsonl, then forwarded unchanged and the reply returned unchanged."""
+    appended to evidence/instances/NAME.requests.jsonl, then forwarded to TO, and the reply's status, body, and
+    content type are returned. Not byte-transparent: repeated header lines become one (the last)."""
     state = load_state()
     target = state["instances"].get(args.to) or fail(f"no instance {args.to!r} in this run")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", args.name) or args.name in state["instances"]:
@@ -294,7 +303,7 @@ def cmd_tap_server(args: argparse.Namespace) -> None:
             forward = {k: v for k, v in self.headers.items() if k.lower() not in ("host", "content-length", "connection")}
             request = urllib.request.Request(target + self.path, data=body or None, method=self.command, headers=forward)
             try:
-                with urllib.request.urlopen(request, timeout=60) as reply:
+                with OPENER.open(request, timeout=60) as reply:
                     status, data, ctype = reply.status, reply.read(), reply.headers.get("content-type", "")
             except urllib.error.HTTPError as error:
                 status, data, ctype = error.code, error.read(), error.headers.get("content-type", "")
@@ -504,15 +513,23 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
         exit_file = Path(f"{inst['base']}.exit")
         if inst["pid"] and alive(inst["pid"]) and ours(inst):
             started = time.monotonic()
-            os.kill(inst["pid"], signal.SIGTERM)
-            while time.monotonic() - started < STOP_WAIT and not exit_file.exists():
+            try:
+                os.kill(inst["pid"], signal.SIGTERM)
+            except ProcessLookupError:
+                pass  # it exited between the check and the signal
+            while time.monotonic() - started < STOP_WAIT and not exit_file.exists() and alive(inst["pid"]):
                 time.sleep(0.1)
             row["sigterm_seconds"] = round(time.monotonic() - started, 2)
-            if not exit_file.exists():
-                os.killpg(inst["supervisor"], signal.SIGKILL)  # the group this run created for the instance
-                row["forced"] = f"SIGKILL after {STOP_WAIT}s"
+            if not exit_file.exists() and alive(inst["pid"]):
+                try:
+                    os.killpg(inst["supervisor"], signal.SIGKILL)  # the group this run created for the instance
+                    row["forced"] = f"SIGKILL after {STOP_WAIT}s"
+                except ProcessLookupError:
+                    row["forced"] = "its process group is already gone"
         elif inst["pid"] and alive(inst["pid"]):
             row["skipped"] = f"pid {inst['pid']} is no longer this run's sys1 serve; not touched"
+        if not exit_file.exists() and inst.get("supervisor") and not alive(inst["supervisor"]):
+            row["supervisor_gone"] = "its supervisor died first, so the exit code was not recorded"
         time.sleep(0.2)
         row["exit_code"] = int(exit_file.read_text()) if exit_file.exists() else None
         with socket.socket() as sock:
