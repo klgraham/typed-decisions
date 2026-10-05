@@ -145,3 +145,70 @@ def test_an_upstream_that_leads_back_to_the_router_fails_once_instead_of_recursi
     assert reply.status_code == 502 and reply.json()["error"]["code"] == "backend_failed"
     assert "508" in reply.json()["error"]["message"]
     assert hops == [router.instance]  # one hop, refused, no recursion
+
+
+@pytest.mark.parametrize("raw", [b"caf\xe9", b"\xff\xfe", "t\u00e9st".encode(), b"router-a, caf\xe9"])
+def test_a_non_ascii_hop_header_is_a_clean_422_not_a_502(raw):
+    """L-r6-1: such a header could not be forwarded (header values are ASCII), and used to come back as a misleading
+    502 "upstream body is not JSON" from a proxied model. Now the request is refused before any backend runs."""
+    from systemone_serve.backends.systemone_http import HOP_HEADER
+
+    http, echo = client()
+    reply = http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: raw})
+    assert reply.status_code == 422
+    error = reply.json()["error"]
+    assert error["code"] == "invalid_request" and HOP_HEADER in error["message"]
+    assert "ASCII letters" in error["message"] and "not JSON" not in error["message"]
+    assert echo.seen == []
+
+
+@pytest.mark.parametrize("header, entry", [
+    ("a b", 1), ("ok,a;b", 2), ("a/b", 1), ("<script>", 1), ("r0,a\tb", 2), ("a.b", 1), ("a=b", 1),
+])
+def test_a_malformed_hop_entry_is_refused_and_names_its_position(header, entry):
+    from systemone_serve.backends.systemone_http import HOP_HEADER
+
+    http, echo = client()
+    reply = http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: header})
+    assert reply.status_code == 422 and reply.json()["error"]["code"] == "invalid_request"
+    assert f"entry {entry} " in reply.json()["error"]["message"]
+    assert header not in reply.json()["error"]["message"]  # the entry's text is not echoed back
+    assert echo.seen == []
+
+
+def test_hop_entries_are_capped_in_length_and_empty_entries_are_ignored():
+    from systemone_serve.backends.systemone_http import HOP_ENTRY_MAX, HOP_HEADER
+
+    http, echo = client()
+    longest = "a" * HOP_ENTRY_MAX
+    assert http.post("/v1/systemone", json={**QUESTION, "model": "echo"},
+                     headers={HOP_HEADER: f" , {longest},, b_-9 ,"}).status_code == 200
+    assert echo.seen[0].via[:2] == (longest, "b_-9")
+    oversized = http.post("/v1/systemone", json={**QUESTION, "model": "echo"},
+                          headers={HOP_HEADER: f"ok,{longest}a"})
+    assert oversized.status_code == 422
+    assert f"entry 2 is {HOP_ENTRY_MAX + 1} characters long" in oversized.json()["error"]["message"]
+    assert len(echo.seen) == 1
+
+
+def test_a_non_ascii_hop_header_on_a_proxied_model_never_reaches_the_upstream():
+    """CR's r6 repro: the same header on a model served by a System One upstream (kev-4b here, over a mock)."""
+    import httpx2
+
+    from systemone_serve.backends.systemone_http import HOP_HEADER, SystemOneHTTP
+
+    sent: list[httpx2.Request] = []
+
+    def upstream(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return httpx2.Response(200, json={"model": "kev-latest", "answers": {"q": {"type": "noul", "noul": 0.9}},
+                                          "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    backend = SystemOneHTTP.for_spec(CATALOG[[s.id for s in CATALOG].index("kev-4b")], transport=httpx2.MockTransport(upstream))
+    http = TestClient(create_app(Router(specs=[], backends={"kev-4b": backend}), api_key=""))
+    for raw in (b"a,b,caf\xe9", b"\xff\xfe", "t\u00e9st".encode()):
+        reply = http.post("/v1/systemone", json={**QUESTION, "model": "kev-4b"}, headers={HOP_HEADER: raw})
+        assert reply.status_code == 422 and reply.json()["error"]["code"] == "invalid_request", reply.text
+    assert sent == []
+    ok = http.post("/v1/systemone", json={**QUESTION, "model": "kev-4b"}, headers={HOP_HEADER: "a,b"})
+    assert ok.status_code == 200 and sent[0].headers[HOP_HEADER].startswith("a,b,")

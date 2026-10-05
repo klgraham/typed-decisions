@@ -136,3 +136,39 @@ def test_local_upstreams_get_the_hop_chain_and_hosted_jev_does_not(monkeypatch):
     jev = dataclasses.replace(parse({**REQUEST, "model": "jev-latest"}), via=("router-a",))
     SystemOneHTTP.for_spec(BY_ID["jev-latest"], transport=transport).evaluate(jev)
     assert HOP_HEADER not in calls[0].headers
+
+
+def test_a_malformed_hop_chain_from_a_library_caller_is_refused_before_sending():
+    import dataclasses
+
+    transport, calls = recorder()
+    backend = SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport)
+    for via in (("caf\u00e9",), ("ok", "a" * 65), ("a b",)):
+        with pytest.raises(InvalidRequest, match="x-systemone-serve-via entry"):
+            backend.evaluate(dataclasses.replace(parse(REQUEST), via=via))
+    assert calls == []
+
+
+@pytest.mark.parametrize("content", [b"<html>not json</html>", b"\xff\xfe{}"])
+def test_a_body_that_does_not_decode_is_reported_as_not_json(content):
+    """The SDK rejects such a 200 itself today; this is the narrowed branch behind it (JSON and UTF-8 errors only)."""
+    backend = SystemOneHTTP.for_spec(BY_ID["kev-4b"])
+    with pytest.raises(BackendFailed, match="kev-4b: upstream body is not JSON"):
+        backend._json(httpx2.Response(200, content=content))
+
+
+def test_an_encoding_error_while_sending_does_not_pass_for_a_body_that_is_not_json():
+    """Before L-r6-1 was fixed, a UnicodeEncodeError (a ValueError) raised while sending fell into the "not JSON" branch.
+    Now it propagates as itself, and the router reports it as backend_failed under its own name."""
+    from systemone_serve.router import Router
+
+    def refuse(request: httpx2.Request) -> httpx2.Response:
+        "caf\u00e9".encode("ascii")  # raises UnicodeEncodeError, as httpx2 did for a non-ASCII header value
+        raise AssertionError("unreachable")
+
+    backend = SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=httpx2.MockTransport(refuse))
+    with pytest.raises(UnicodeEncodeError):
+        backend.evaluate(parse(REQUEST))
+    with pytest.raises(BackendFailed) as raised:
+        Router(specs=[], backends={"kev-4b": backend}).evaluate(REQUEST)
+    assert "UnicodeEncodeError" in str(raised.value) and "not JSON" not in str(raised.value)
