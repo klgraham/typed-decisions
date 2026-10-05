@@ -6,7 +6,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - Run from the repo root after `uv sync --frozen`; `.venv/bin/python` must exist.
 - Start a run with `eval "$($S init)"`; every later command uses that `VERIFY_RUN_ID`.
-- No real keys and no GPU: the helper strips `*_API_KEY`, `HF_TOKEN`, `SHIM_TOKEN`, `TOGETHER_MODEL`, `TYPESAFE_BASE_URL`, `SYSTEMONE_SERVE_API_KEY`, and `SYSTEMONE_<ID>_URL/_MODEL` from what it starts. Dummy values go in with `--env`.
+- No real keys and no GPU: what the helper starts gets a minimal allowlisted environment (see `../SKILL.md`), so no key, token, proxy variable, or `SYSTEMONE_<ID>_URL/_MODEL` from your shell reaches it. Dummy values go in with `--env`.
 - Models that need nothing: `uniform-baseline` in process, and a second `sys1 serve` as a System One upstream. Hosted Jev without a key is the standard "backend unavailable" negative.
 - The standard topology, when a recipe says "baseline routers": `$S launch B -- --model uniform-baseline`, `$S tap T --to B`, `$S launch A -- --model uniform-baseline --model up --upstream "up={url:T}#uniform-baseline"`.
 - Run `$S doctor` and require `"ok": true` before driving. Never drive an instance this run did not launch.
