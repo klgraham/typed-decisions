@@ -57,7 +57,7 @@ def test_a_valid_answer_passes_unchanged(body):
     (respond({"department": {**GOOD["department"], "confidence": 3.0}}), "confidence must be"),
     (respond({"department": {**GOOD["department"], "probabilities": {"billing": 0.9, "refunds": 0.1}}}),
      "options that do not exist: \\['refunds'\\]"),
-    (respond({"department": {**GOOD["department"], "probabilities": {"billing": 0.9, "technical": 0.9}}}), "sum to 1.8000"),
+    (respond({"department": {**GOOD["department"], "probabilities": {"billing": 0.9, "technical": 0.9}}}), "sum to 1.8, more than 1 \\+ 0.02"),
     (respond({"department": {**GOOD["department"], "probabilities": ["billing"]}}), "outside the System One contract"),
     (respond({"department": {**GOOD["department"], "probabilities": {"billing": 2.0, "technical": 0, "sales": 0}}}),
      "every probability"),
@@ -100,3 +100,23 @@ def test_compare_rows_are_checked(body):
     result = run(body, ["uniform-baseline", "liar"], Router(backends={"liar": Fixed(bad)}))
     assert [r["ok"] for r in result["results"]] == [True, False]
     assert result["results"][1]["error"]["code"] == "backend_failed"
+
+
+TEN = {"state": "s", "questions": {"q": {"type": "choice", "criteria": {f"o{i}": None for i in range(10)}}}}
+
+
+def ten(probabilities: dict) -> dict:
+    return {"model": "m", "answers": {"q": {"type": "choice", "choice": "o0", "confidence": 0.15,
+                                            "probabilities": probabilities}},
+            "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+
+def test_rounding_allowance_grows_with_the_options_reported():
+    # True values 0.145 and 9 x 0.095 sum to 1; rounded half-up to 2 decimals they report 0.15 + 9 x 0.10 = 1.05.
+    rounded = ten({"o0": 0.15, **{f"o{i}": 0.10 for i in range(1, 10)}})
+    assert evaluate(rounded, TEN) == rounded
+    with pytest.raises(BackendFailed, match="more than 1 \\+ 0.05"):
+        evaluate(ten({"o0": 0.17, **{f"o{i}": 0.10 for i in range(1, 10)}}), TEN)  # 1.07
+    with pytest.raises(BackendFailed, match="more than 1 \\+ 0.02"):  # few options: the 0.02 floor holds
+        evaluate(ten({"o0": 0.52, "o1": 0.51}), TEN)
+    assert evaluate(ten({"o0": 0.51, "o1": 0.51}), TEN)["answers"]["q"]["probabilities"] == {"o0": 0.51, "o1": 0.51}

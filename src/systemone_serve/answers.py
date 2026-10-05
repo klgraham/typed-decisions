@@ -147,7 +147,14 @@ def _unit(value: Any) -> bool:
     return _number(value) and -EPSILON <= value <= 1 + EPSILON
 
 
-SUM_TOLERANCE = 0.02  # reported probabilities are rounded (Jev uses 2 decimals), so their sum can pass 1 slightly
+# Reported probabilities are rounded (Jev uses 2 decimals), so their sum can pass 1: by up to half a unit in the last
+# place per reported option, 0.005 at 2 decimals. The allowance grows with the options reported, never below 0.02.
+SUM_TOLERANCE = 0.02
+ROUNDING_PER_OPTION = 0.005
+
+
+def sum_tolerance(reported: int) -> float:
+    return max(SUM_TOLERANCE, ROUNDING_PER_OPTION * reported)
 
 
 def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
@@ -161,8 +168,10 @@ def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
     if not all(_unit(value) for value in probabilities.values()):
         raise BackendFailed(f"{where}: every probability must be a number in [0, 1].")
     total = sum(probabilities.values())
-    if total > 1 + SUM_TOLERANCE:
-        raise BackendFailed(f"{where}: probabilities sum to {total:.4f}, more than 1.")
+    tolerance = sum_tolerance(len(probabilities))
+    if total > 1 + tolerance + 1e-9:  # 1e-9: float noise in the sum itself, far below any rounding step
+        raise BackendFailed(f"{where}: probabilities sum to {total:.6g}, more than 1 + {tolerance:g} (the rounding "
+                            f"allowance for {len(probabilities)} options).")
 
 
 def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
