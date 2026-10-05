@@ -1,0 +1,178 @@
+"""`systemone-serve`: list, serve, ask, compare, download. JSON on stdout; the exit code says what happened.
+
+Exit codes:
+  0  success
+  1  unexpected error (a bug; the message is on stderr)
+  2  invalid input: bad arguments, unreadable or invalid JSON, unknown model
+  3  backend unavailable: missing extra, hardware, API key, or a stopped upstream
+  4  backend failed: the model or upstream returned an error or an off-contract answer
+  5  compare: at least one target failed (each failure is in the JSON)
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+from systemone_serve import catalog
+from systemone_serve.errors import InvalidRequest, ServeError, UnknownModel
+from systemone_serve.router import Router, upstream_spec
+
+PARTIAL = 5
+
+
+def emit(payload: Any) -> None:
+    sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def fail(error: ServeError) -> int:
+    emit({"error": {"code": error.code, "message": str(error)}})
+    return error.exit_code
+
+
+def read_json(source: str) -> Any:
+    try:
+        text = sys.stdin.read() if source == "-" else Path(source).read_text()
+    except OSError as error:
+        raise InvalidRequest(f"Cannot read {source}: {error}") from error
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise InvalidRequest(f"{source} is not JSON: {error}") from error
+
+
+def build_router(upstreams: list[str]) -> Router:
+    specs = list(catalog.CATALOG)
+    for item in upstreams:
+        name, sep, url = item.partition("=")
+        if not sep or not name or not url:
+            raise InvalidRequest(f"--upstream takes NAME=URL, got {item!r}.")
+        specs.append(upstream_spec(name, url))
+    return Router(specs)
+
+
+def cmd_models(args: argparse.Namespace) -> int:
+    emit({"hardware": catalog.hardware(), "models": [catalog.status(spec) for spec in catalog.CATALOG]})
+    return 0
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    body = read_json(args.input)
+    if not isinstance(body, dict):
+        raise InvalidRequest("The request must be a JSON object.")
+    if args.model:
+        body["model"] = args.model
+    if args.url:
+        return _ask_url(body, args.url)
+    emit(build_router(args.upstream).evaluate(body))
+    return 0
+
+
+def _ask_url(body: dict[str, Any], url: str) -> int:
+    """Send to a running router (or any System One server) with the TypeSafe SDK, as any client would."""
+    from systemone_serve.answers import Request, parse
+    from systemone_serve.backends.systemone_http import SystemOneHTTP
+    from systemone_serve.server import SERVE_KEY_ENV
+
+    request: Request = parse(body)
+    emit(SystemOneHTTP(url, url, None, key_env=SERVE_KEY_ENV).evaluate(request))
+    return 0
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    from systemone_serve.compare import run
+
+    body = read_json(args.input)
+    if not isinstance(body, dict):
+        raise InvalidRequest("The request must be a JSON object.")
+    result = run(body, args.target, build_router(args.upstream))
+    emit(result)
+    return 0 if all(entry["ok"] for entry in result["results"]) else PARTIAL
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from systemone_serve.launch import launched
+    from systemone_serve.server import SERVE_KEY_ENV, create_app
+
+    router = build_router(args.upstream)
+    if args.model:
+        unknown = [model for model in args.model if model not in router.specs]
+        if unknown:
+            raise UnknownModel(f"Unknown model(s): {', '.join(unknown)}.")
+        router = Router([router.specs[model] for model in args.model])
+    to_launch = [router.specs[model] for model in (args.model or [])] if args.launch else []
+    if args.launch and not to_launch:
+        raise InvalidRequest("--launch needs at least one --model.")
+    with launched(to_launch, timeout=args.launch_timeout) as started:
+        emit({"event": "listening", "url": f"http://{args.host}:{args.port}", "models": router.ids(),
+              "launched": started, "auth": bool(os.environ.get(SERVE_KEY_ENV, "").strip())})
+        sys.stdout.flush()
+        uvicorn.run(create_app(router), host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
+def cmd_download(args: argparse.Namespace) -> int:
+    from systemone_serve.backends._runtime import snapshot
+
+    spec = catalog.BY_ID.get(args.model)
+    if spec is None:
+        raise UnknownModel(f"Unknown model {args.model!r}.")
+    if not spec.hf_repo:
+        raise InvalidRequest(f"{spec.id} has no Hugging Face weights to download.")
+    emit({"model": spec.id, "hf_repo": spec.hf_repo, "path": snapshot(spec.hf_repo), "license": spec.license})
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(prog="systemone-serve", description=__doc__,
+                                   formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = root.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("models", help="List every model, its extra, hardware, URL, and readiness.").set_defaults(run=cmd_models)
+
+    upstream = argparse.ArgumentParser(add_help=False)
+    upstream.add_argument("--upstream", action="append", default=[], metavar="NAME=URL[#MODEL]",
+                          help="Add another System One server under NAME; MODEL is the name it expects (repeatable).")
+
+    serve = sub.add_parser("serve", parents=[upstream], help="Run the router on POST /v1/systemone and GET /v1/models.")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8080)
+    serve.add_argument("--model", action="append", help="Serve only these models (repeatable). Default: all.")
+    serve.add_argument("--launch", action="store_true", help="Also start each --model's upstream server.")
+    serve.add_argument("--launch-timeout", type=float, default=1800.0, help="Seconds to wait per upstream (downloads included).")
+    serve.set_defaults(run=cmd_serve)
+
+    ask = sub.add_parser("ask", parents=[upstream], help="Send one System One request and print the response.")
+    ask.add_argument("input", nargs="?", default="-", help="Request JSON file, or - for stdin (default).")
+    ask.add_argument("--model", help="Override the body's model.")
+    ask.add_argument("--url", help="Send to a running server instead of routing in this process.")
+    ask.set_defaults(run=cmd_ask)
+
+    compare = sub.add_parser("compare", parents=[upstream], help="Run one request through several targets.")
+    compare.add_argument("input", help="Request JSON file (model is ignored), or - for stdin.")
+    compare.add_argument("-t", "--target", action="append", required=True,
+                         help="Catalog id, llm:<provider>:<model>, or url:<base_url> (repeatable).")
+    compare.set_defaults(run=cmd_compare)
+
+    download = sub.add_parser("download", help="Download a model's Hugging Face snapshot (no weights ship here).")
+    download.add_argument("model")
+    download.set_defaults(run=cmd_download)
+    return root
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        return args.run(args)
+    except ServeError as error:
+        return fail(error)
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
