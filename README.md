@@ -1,0 +1,129 @@
+# systemone-serve
+
+This repo's only purpose is to serve decision models through a System One-compatible API so they are easy to evaluate against hosted Jev and against LLMs.
+
+## Shared API
+
+The models do not all share one API. This repo wraps them so a client can call `POST /v1/systemone` and `GET /v1/models`, the System One routes TypeSafe documents for Jev. The router picks the backend from the request's `model`.
+
+- API docs: https://docs.typesafe.ai/api.md
+- Python client: [`typesafe-sdk` 0.7.2](https://github.com/typesafe-ai/typesafe-sdk-python)
+
+Point `TYPESAFE_BASE_URL` at this server and the same client talks to a local model:
+
+```python
+from typesafe_sdk import Noul, TypeSafeClient
+
+client = TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8080", model="kev-4b")
+print(client.system_one(state="I was charged twice.", questions={"refund": Noul(instructions="Refund request?")}).nouls)
+```
+
+Where a model already ships a System One server (Perplexity, OpenJev, Kev, Tev1 on Ollama), the router forwards to it. Only Clef, CUA, and Tev1 on Together are adapted in process. [docs/design.md](docs/design.md) explains why.
+
+## Jev
+
+Hosted Jev is a comparison target. This repo does not serve Jev weights. The models `jev-latest`, `jev-preview`, and `jev-1.13.0` go through `typesafe-sdk` to `https://api.typesafe.ai`.
+
+The API key comes only from the `TYPESAFE_API_KEY` environment variable. It is never read from a file, a flag, or a request. If it is unset, a Jev request fails with `backend_unavailable` (HTTP 503 from the server, exit code 3 from the CLI) and nothing is sent. The Jev backend ignores `TYPESAFE_BASE_URL`, so pointing that variable at this router cannot make Jev requests loop back.
+
+## Comparison with LLMs
+
+An LLM can approximate the same decisions by generating tokens. `systemone-serve compare` runs one question set against hosted Jev, any served decision model, and an LLM through [`system-one-adapter` 0.2.1](https://github.com/typesafe-ai/system-one-adapter-python), then lines the answers up per question.
+
+## Weights
+
+This repo does not provide model weights. Download them with Hugging Face tooling (`systemone-serve download <model>`, `hf download`, or the upstream server's own first-run download) and serve them locally. Licenses differ per model. Follow each model's license.
+
+## Models
+
+| id | Model | License | Stack | Hardware | Extra |
+| --- | --- | --- | --- | --- | --- |
+| `jev-latest`, `jev-preview`, `jev-1.13.0` | Jev (hosted) | TypeSafe terms | `typesafe-sdk` to api.typesafe.ai | none | none |
+| `pplx-decider-v1-27b` | [perplexity-ai/pplx-decider-v1-27b](https://huggingface.co/perplexity-ai/pplx-decider-v1-27b) | Apache-2.0 | proxy to bundled `autojev.server`; torch 2.14.0, transformers 5.17.0 | CUDA, ~49 GiB weights | `pplx` |
+| `openjev` | [openjev/openjev](https://huggingface.co/openjev/openjev) | CC BY-NC 4.0 (weights) | proxy to `helper/shim.py` over vLLM 0.29.0 | CUDA (H100 FP8 measured); MLX text-only; GGUF | `openjev`, `openjev-mlx` |
+| `tev1-4b-experimental` | [togethercomputer/Tev1-4B-experimental](https://huggingface.co/togethercomputer/Tev1-4B-experimental) | not stated (being finalized) | proxy to Ollama >= 0.35 `/v1/systemone` (`tev1`) | whatever Ollama runs on | none |
+| `tev1-4b-experimental@together` | same | same | adapter over Together chat completions (letter logprobs) | hosted | none |
+| `cua-s1-4b-0.2` | [cua-ai/cua-s1-4b-0.2](https://huggingface.co/cua-ai/cua-s1-4b-0.2) | Apache-2.0 (adapter) | adapter over `cua_s1.four_b.FourBModel` | MPS or CPU measured; CUDA unmeasured | `cua` |
+| `kev-4b` | [jaredpalmer/kev-4b](https://huggingface.co/jaredpalmer/kev-4b) | Apache-2.0 | proxy to `python -m kev.serve` | CUDA (~16 GB) or MLX on Apple silicon | `kev` |
+| `clef-flash` | [Cloudflare/clef-flash](https://huggingface.co/Cloudflare/clef-flash) | Apache-2.0 | in process: the release's `joint_schema_model.systemone()` | CUDA (H200 tested) | `clef` |
+| `clef` | [Cloudflare/clef](https://huggingface.co/Cloudflare/clef) | Apache-2.0 | same as Clef-Flash, 27B | CUDA (H200 tested) | `clef` |
+| `uniform-baseline` | none | MIT | uniform probabilities | none | none |
+
+The CUA and Tev1-on-Together adapters run their models outside the format they were trained on (computer-use options; one option letter). Treat their numbers as indicative. Full pins, licenses, and acceleration notes: [docs/serving-and-dependencies.md](docs/serving-and-dependencies.md).
+
+## Install
+
+Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync                          # router, CLI, hosted Jev, uniform baseline, Ollama/Tev1 proxy
+uv sync --extra llm-openai       # + LLM comparison (also llm-anthropic, llm-gemini)
+uv sync --extra kev              # + one local model: pplx | openjev | openjev-mlx | kev | clef | cua
+```
+
+The model extras conflict with each other (Kev needs torch < 2.9, Perplexity pins 2.14.0, vLLM pulls 2.13.0), so install one per environment. A router in one environment can still forward to upstreams running in others: set the upstream's URL env var (shown by `systemone-serve models`, e.g. `SYSTEMONE_KEV_4B_URL`).
+
+## CLI
+
+Every command prints JSON on stdout. Logs and upstream output go to stderr.
+
+```bash
+systemone-serve models                                   # every model: extra installed?, URL, auth env set?, hardware
+systemone-serve serve --port 8080                        # route to all models
+systemone-serve serve --model kev-4b --launch            # start kev.serve on :8008, then route to it
+systemone-serve ask examples/support-ticket.json         # route in this process, no server needed
+systemone-serve ask --model kev-4b < request.json        # body from stdin, model overridden
+systemone-serve ask request.json --url http://127.0.0.1:8080   # send to a running server
+systemone-serve compare examples/support-ticket.json \
+    -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini -t uniform-baseline
+systemone-serve download clef-flash                      # Hugging Face snapshot; prints the path
+```
+
+`compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`.
+
+Example `compare` output (trimmed):
+
+```json
+{
+  "results": [
+    {"target": "jev-latest", "ok": true, "latency_ms": 200.6, "response": {"model": "jev-1.13.0", "answers": {"...": "..."}}},
+    {"target": "kev-4b", "ok": false, "latency_ms": 1.8, "error": {"code": "backend_unavailable", "message": "kev-4b: cannot reach http://127.0.0.1:8008 ..."}}
+  ],
+  "questions": {
+    "is_urgent": {"type": "noul", "values": {"jev-latest": 0.95, "uniform-baseline": 0.5}, "spread": 0.45},
+    "department": {"type": "choice", "values": {"jev-latest": "billing", "uniform-baseline": "billing"}, "agree": true}
+  }
+}
+```
+
+### Exit codes
+
+| Code | Meaning | HTTP status from `serve` |
+| --- | --- | --- |
+| 0 | success | 200 |
+| 1 | unexpected error (bug) | 500 |
+| 2 | invalid input: arguments, JSON, question shape, unknown model | 422 / 404 |
+| 3 | backend unavailable: missing extra, hardware, API key, or a stopped upstream | 503 |
+| 4 | backend failed: upstream error or an answer outside the contract | 502 |
+| 5 | `compare` only: at least one target failed (details in the JSON) | n/a |
+
+Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the same body.
+
+### Environment
+
+| Variable | Used for |
+| --- | --- |
+| `TYPESAFE_API_KEY` | hosted Jev, and nothing else |
+| `SYSTEMONE_SERVE_API_KEY` | optional Bearer key this server requires; unset means open (bind to 127.0.0.1) |
+| `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL` |
+| `KEV_API_KEY`, `AUTOJEV_API_KEY`, `SHIM_TOKEN` | Bearer keys the Kev, Perplexity, and OpenJev upstreams check; forwarded when set |
+| `TOGETHER_API_KEY`, `TOGETHER_MODEL` | `tev1-4b-experimental@together` (default model `together/Tev1-4B-experimental`) |
+| `SYSTEMONE_DEVICE`, `SYSTEMONE_DTYPE` | force the device or dtype of the in-process Clef and CUA backends |
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+The suite runs on a CPU-only machine with no weights and no keys: contract tests with fake backends, the TypeSafe SDK against a running router, the proxy with a mocked network, the adapters with fake models, `--launch` with a subprocess upstream, and the CLI. Live tests in `tests/test_live.py` skip unless their key, upstream URL, or `SYSTEMONE_LIVE_INPROCESS=1` is set. For an agent-driven check, see [skills/systemone-serve/SKILL.md](skills/systemone-serve/SKILL.md).
