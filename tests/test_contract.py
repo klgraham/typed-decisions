@@ -120,3 +120,47 @@ def test_rounding_allowance_grows_with_the_options_reported():
     with pytest.raises(BackendFailed, match="more than 1 \\+ 0.02"):  # few options: the 0.02 floor holds
         evaluate(ten({"o0": 0.52, "o1": 0.51}), TEN)
     assert evaluate(ten({"o0": 0.51, "o1": 0.51}), TEN)["answers"]["q"]["probabilities"] == {"o0": 0.51, "o1": 0.51}
+
+
+def many(n: int) -> dict:
+    return {"state": "s", "questions": {"q": {"type": "choice", "criteria": {f"o{i}": None for i in range(n)}}}}
+
+
+def reported(values: list[float]) -> dict:
+    return {"model": "m", "answers": {"q": {"type": "choice", "choice": "o0", "confidence": 0.5,
+                                            "probabilities": {f"o{i}": value for i, value in enumerate(values)}}},
+            "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+
+@pytest.mark.parametrize("n, values, places", [
+    (100, [0.0151] * 50 + [0.0149] * 50, 4),  # sum 1.5: 4-decimal rounding can add at most 100 x 0.00005
+    (255, [0.0089] * 255, 4),  # sum 2.2695
+    (255, [0.01] * 227 + [0.0] * 28, 2),  # 2.27 at 2 decimals: rounding can never push a sum past 2
+])
+def test_long_answers_are_held_to_the_precision_they_report(n, values, places):
+    with pytest.raises(BackendFailed, match=f"options reported to {places} decimals"):
+        evaluate(reported(values), many(n))
+
+
+@pytest.mark.parametrize("n, values", [
+    # True values 98 x 0.005 and 2 x 0.255 sum to 1; half-up to 2 decimals they report 98 x 0.01 + 2 x 0.26 = 1.5.
+    (100, [0.26, 0.26] + [0.01] * 98),
+    (255, [0.01] * 200 + [0.0] * 55),  # 200 x 0.005 rounded up: 2.0, the most rounding can reach
+    (255, [0.0041] * 102 + [0.0039] * 153),  # 1.0149 at 4 decimals: past 255 x 0.00005, within the 0.02 floor
+])
+def test_long_answers_within_their_rounding_allowance_pass(n, values):
+    assert evaluate(reported(values), many(n)) == reported(values)
+
+
+def test_mixed_precision_is_judged_by_the_finest_value():
+    two_decimal = [0.31] + [0.01] * 99  # 1.30, possible at 2 decimals with 100 options
+    assert evaluate(reported(two_decimal), many(100)) == reported(two_decimal)
+    with pytest.raises(BackendFailed, match="sum to 1.29.*more than 1 \\+ 0.02 .*reported to 4 decimals"):
+        evaluate(reported([0.3077] + [0.01] * 99), many(100))  # one 4-decimal value: the answer is 4-decimal
+    with pytest.raises(BackendFailed, match="more than 1 \\+ 0.05 .*reported to 2 decimals"):
+        evaluate(reported([0.2] + [0.1] * 9), many(10))  # values on a 0.1 grid still count as 2 decimals
+
+
+def test_sum_error_shows_the_sum_precisely_enough_to_see_the_violation():
+    with pytest.raises(BackendFailed, match="sum to 1\\.0200001, more than 1 \\+ 0.02 "):
+        evaluate(reported([0.51, 0.5100001]), many(2))

@@ -7,7 +7,9 @@ those options however their model does, and hand the probabilities back to `answ
 
 import json
 import math
+from collections.abc import Collection
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter, ValidationError
@@ -147,14 +149,26 @@ def _unit(value: Any) -> bool:
     return _number(value) and -EPSILON <= value <= 1 + EPSILON
 
 
-# Reported probabilities are rounded (Jev uses 2 decimals), so their sum can pass 1: by up to half a unit in the last
-# place per reported option, 0.005 at 2 decimals. The allowance grows with the options reported, never below 0.02.
-SUM_TOLERANCE = 0.02
-ROUNDING_PER_OPTION = 0.005
+# Reported probabilities are rounded, so their sum can pass 1 by up to half a unit in the last place per reported
+# option. The step comes from the values themselves: the most decimals any of them shows is the answer's precision
+# (OpenJev's shim rounds to 4, Jev to 2), counted as at least 2, so values that happen to land on a 0.1 grid do not
+# widen it. A sum can never pass 2 by rounding (a value can only round up if it is at least half a unit, so the gains
+# add up to at most the reported mass), so the allowance stops at 1. It never drops below the 0.02 floor.
+SUM_FLOOR = 0.02
+MIN_DECIMALS = 2
+MAX_EXCESS = 1.0
 
 
-def sum_tolerance(reported: int) -> float:
-    return max(SUM_TOLERANCE, ROUNDING_PER_OPTION * reported)
+def decimals(value: float) -> int:
+    """Decimal places in the shortest form of a reported value: 0.25 -> 2, 0.1234 -> 4, 1.5e-05 -> 6, 1 -> 0."""
+    exponent = Decimal(str(value) if isinstance(value, int) else repr(float(value))).as_tuple().exponent
+    return max(0, -exponent) if isinstance(exponent, int) else 0
+
+
+def sum_tolerance(values: Collection[float]) -> tuple[float, int]:
+    """How far past 1 rounding can push the sum of these reported values, and the decimals that assumes."""
+    places = max([MIN_DECIMALS, *(decimals(value) for value in values)])
+    return max(SUM_FLOOR, min(len(values) * 0.5 * 10.0 ** -places, MAX_EXCESS)), places
 
 
 def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
@@ -168,10 +182,12 @@ def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
     if not all(_unit(value) for value in probabilities.values()):
         raise BackendFailed(f"{where}: every probability must be a number in [0, 1].")
     total = sum(probabilities.values())
-    tolerance = sum_tolerance(len(probabilities))
+    tolerance, places = sum_tolerance(list(probabilities.values()))
     if total > 1 + tolerance + 1e-9:  # 1e-9: float noise in the sum itself, far below any rounding step
-        raise BackendFailed(f"{where}: probabilities sum to {total:.6g}, more than 1 + {tolerance:g} (the rounding "
-                            f"allowance for {len(probabilities)} options).")
+        # Values with at most `places` decimals sum to a multiple of 10^-places, so rounding there drops only float
+        # noise and keeps every digit of the excess: 1.0200001, never "1.02".
+        raise BackendFailed(f"{where}: probabilities sum to {round(total, places)!r}, more than 1 + {tolerance:g} "
+                            f"(the rounding allowance for {len(probabilities)} options reported to {places} decimals).")
 
 
 def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
