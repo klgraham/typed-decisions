@@ -15,6 +15,8 @@ import json
 import os
 import socket
 import sys
+import threading
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,8 @@ from systemone_serve.errors import InvalidRequest, ServeError, UnknownModel, scr
 from systemone_serve.router import Router, upstream_spec
 
 PARTIAL = 5
+SHUTDOWN_GRACE = 5.0  # seconds a stopping `serve` waits for in-flight requests (a hung upstream holds them for 300 s)
+EXIT_GRACE = 2.0  # then seconds it waits for request threads still blocked on an upstream before exiting anyway
 
 
 def emit(payload: Any) -> None:
@@ -138,11 +142,13 @@ def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -
     """Serve on the sockets `_bind` holds, so the only address failure left is listen() being refused (another
     SO_REUSEADDR socket bound the port and listened first): invalid input (2), like any port in use. Any other startup
     failure (uvicorn exits with its STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app
-    failing to start: a bug, 1, with uvicorn's reason on stderr."""
+    failing to start: a bug, 1, with uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE
+    seconds for in-flight requests."""
     import uvicorn
     from uvicorn.config import STARTUP_FAILURE
 
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning",
+                                           timeout_graceful_shutdown=SHUTDOWN_GRACE))
     try:
         server.run(sockets=sockets)
     except OSError as error:
@@ -160,6 +166,17 @@ def _url(host: str, port: int) -> str:
     return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
 
 
+def _check_no_self_loop(router: Router, host: str, port: int) -> None:
+    """Refuse an upstream whose resolved URL (from --upstream, SYSTEMONE_<ID>_URL, or the catalog) is this server.
+    A loop this cannot see (a hostname alias, another router) is stopped per request by the hop header."""
+    loops = [f"{spec.id}'s upstream {spec.resolved_url()} (from {spec.url_source()})"
+             for spec in router.specs.values()
+             if spec.kind in ("systemone-http", "tev1-together") and _same_address(spec.resolved_url() or "", host, port)]
+    if loops:
+        raise InvalidRequest(f"{'; '.join(loops)} points at this server itself ({_url(host, port)}). Point it elsewhere "
+                             "or serve on another port.")
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from systemone_serve.launch import is_loopback, launched
     from systemone_serve.server import SERVE_KEY_ENV, create_app
@@ -172,9 +189,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
                              "bind to 127.0.0.1, or pass --allow-unauthenticated.")
     if exposed and not authenticated:
         print(f"warning: serving on {args.host} with no authentication (--allow-unauthenticated)", file=sys.stderr)
-    for item in args.upstream:
-        if _same_address(item.partition("=")[2], args.host, args.port):
-            raise InvalidRequest(f"--upstream {item} points at this server itself.")
     sockets = _bind(args.host, args.port)
     try:
         router = build_router(args.upstream)
@@ -183,6 +197,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             if unknown:
                 raise UnknownModel(f"Unknown model(s): {', '.join(unknown)}.")
             router = Router([router.specs[model] for model in args.model])
+        _check_no_self_loop(router, args.host, args.port)
         to_launch = [router.specs[model] for model in (args.model or [])] if args.launch else []
         if args.launch and not to_launch:
             raise InvalidRequest("--launch needs at least one --model.")
@@ -249,9 +264,32 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    code = _run(args)
+    if argv is None and args.command == "serve":  # the process itself, not a caller of main()
+        _leave_stuck_threads(code)
+    return code
+
+
+def _leave_stuck_threads(code: int) -> None:
+    """Python waits for every non-daemon thread before exiting, and a request thread blocked on a hung upstream would
+    hold `serve` open long after uvicorn's bounded shutdown. Give such threads EXIT_GRACE seconds, then exit without
+    them."""
+    deadline = time.monotonic() + EXIT_GRACE
+    for thread in threading.enumerate():
+        if thread is not threading.main_thread() and not thread.daemon:
+            thread.join(max(0.0, deadline - time.monotonic()))
+    stuck = [t for t in threading.enumerate() if t is not threading.main_thread() and not t.daemon and t.is_alive()]
+    if stuck:
+        print(f"warning: exiting with {len(stuck)} request(s) still waiting on an upstream", file=sys.stderr)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+
+
+def _run(args: argparse.Namespace) -> int:
     from systemone_serve.launch import Terminated
 
-    args = parser().parse_args(argv)
     try:
         return args.run(args)
     except ServeError as error:
