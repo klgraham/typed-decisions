@@ -81,7 +81,7 @@ sys1 compare examples/support-ticket.json \
 sys1 download clef-flash                            # Hugging Face snapshot; prints the path
 ```
 
-A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range, probabilities only for real options and summing to at most 1 plus a rounding allowance of 0.005 per reported option, at least 0.02; an upstream that reports only its top-k options is fine); a violation is `backend_failed`.
+A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range, probabilities only for real options and summing to at most 1 plus a rounding allowance; an upstream that reports only its top-k options is fine). The allowance is half a unit in the last decimal place per reported option, at the precision the answer reports: the most decimals any of its values shows, counted as at least 2 (Jev reports 2, the OpenJev shim 4). It is never less than 0.02 and never more than 1, since rounding cannot push a sum past 2. A violation is `backend_failed`.
 
 `serve --launch` runs each upstream in its own process group with only the keys it needs (its own auth variable and `HF_TOKEN`). SIGTERM, SIGHUP, or Ctrl-C stops the whole group before exit, including during the readiness wait. A port that is already taken fails the launch instead of being mistaken for the new upstream. Each upstream listens on its URL's host (`SYSTEMONE_<ID>_URL` may name `127.0.0.1`, another `127.x` address, `localhost`, or `[::1]`), and the port check and readiness probe use that host too; an upstream that cannot listen there (the OpenJev shim is IPv4-only) is refused up front. One gap is left: if the router itself is SIGKILLed (or OOM-killed), no cleanup runs. On Linux each launched upstream still gets SIGTERM, but a process that upstream started (a grandchild) can survive, unless the upstream stops its own workers as `ollama serve` does. On other systems the upstreams themselves keep running.
 
@@ -109,8 +109,8 @@ Example `compare` output (trimmed):
 | Code | Meaning | HTTP status from `serve` |
 | --- | --- | --- |
 | 0 | success | 200 |
-| 1 | unexpected error (bug; traceback on stderr) | 500 |
-| 2 | invalid input: arguments, JSON, question shape, unknown model, the router's port in use (on any address `--host` resolves to, even if taken just after the check), unauthenticated non-loopback `--host` | 422 / 404 |
+| 1 | unexpected error (bug; traceback on stderr), including `serve` failing to start for a reason other than its port | 500 |
+| 2 | invalid input: arguments, JSON, question shape, unknown model, the router's port in use on any address `--host` resolves to (`serve` binds them all before anything else and serves on those sockets), unauthenticated non-loopback `--host` | 422 / 404 |
 | 3 | backend unavailable: missing extra, hardware, an API key unset or rejected (401/403), or a stopped upstream | 503 |
 | 4 | backend failed: upstream or model error, or an answer outside the contract | 502 |
 | 5 | `compare` only: at least one target failed (details in the JSON) | n/a |
@@ -125,8 +125,9 @@ Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the 
 | `TYPESAFE_API_KEY` | hosted Jev, and nothing else |
 | `SYSTEMONE_SERVE_API_KEY` | optional Bearer key this server requires; unset means open, which `serve` allows only on loopback unless `--allow-unauthenticated` |
 | `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL` |
+| `SYSTEMONE_<ID>_MODEL` | the model name sent to that upstream, e.g. `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL=tev1:4b-q4_K_M` for an Ollama tag other than `tev1`. Defaults: pplx `jev-latest`, OpenJev `openjev`, Ollama `tev1`, Kev `kev-latest`, Together `together/Tev1-4B-experimental`. `sys1 models` shows each `model_env` and the name in effect. Hosted Jev ignores it, as it ignores `SYSTEMONE_<ID>_URL` |
 | `KEV_API_KEY`, `AUTOJEV_API_KEY`, `SHIM_TOKEN` | Bearer keys the Kev, Perplexity, and OpenJev upstreams check; forwarded when set |
-| `TOGETHER_API_KEY`, `TOGETHER_MODEL` | `tev1-4b-experimental@together` (default model `together/Tev1-4B-experimental`) |
+| `TOGETHER_API_KEY`, `TOGETHER_MODEL` | `tev1-4b-experimental@together` (default model `together/Tev1-4B-experimental`; `SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL` wins over `TOGETHER_MODEL`) |
 | `SYSTEMONE_DEVICE`, `SYSTEMONE_DTYPE` | force the device or dtype of the in-process Clef and CUA backends |
 
 ## Tests
