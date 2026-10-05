@@ -164,3 +164,19 @@ Checked against the live repos and cards. Where they differ from the review abov
 - **CUA.** `cua_s1.four_b.FourBModel(base_model, lora_adapter_path, device, dtype, modality).forward(options, app=, task_family=, ax_tree=)` scores up to 26 lettered options. The stdio `cua.decision_choice_v1` chooser lives in `libs/cua-driver/examples/jev-use` and is not used here.
 - **Clef.** `joint_schema_model.load_release_model(path, device="cuda")` and `systemone(model, processor, body)` match the review. The response sets `output_tokens` to 0.
 - **Python.** Every upstream needs Python >= 3.11 (Perplexity, Kev, and Tev1's repo need >= 3.12), so this package requires >= 3.12.
+
+## Pinned Hugging Face revisions
+
+Code from these snapshots runs on this machine (Clef's `joint_schema_model.py` in the router process; Perplexity's `source/src` and OpenJev's `helper/shim.py` as launched upstreams; vLLM with `--trust-remote-code` on the OpenJev snapshot), so every download is pinned to the commit below (`ModelSpec.hf_revision`, passed as `snapshot_download(revision=...)`; Kev as `kev.serve --run jaredpalmer/kev-4b@<sha>`). Recorded from the Hub API on 2026-10-04. To move a model forward, review the diff on the Hub and change the SHA in `catalog.py`.
+
+| Repo | Commit | Executed code |
+| --- | --- | --- |
+| perplexity-ai/pplx-decider-v1-27b | `5117a6c7fe73b19308dc1a6b0fb529a40c2ecad4` | `source/src/autojev` (launched server) |
+| openjev/openjev | `ac97900fd034fdd7e7e536f3d4c21b836cae0750` | `helper/shim.py`, vLLM `--trust-remote-code` |
+| Cloudflare/clef-flash | `17f0b0ad64efb65d273590632833508766b2aae6` | `joint_schema_model.py` (in process) |
+| Cloudflare/clef | `2f3de3dd85f379784083b0814d997ab627200f0c` | `joint_schema_model.py` (in process) |
+| cua-ai/cua-s1-4b-0.2 | `16818868b0cc7813808aae4e87b417657046ab79` | none (LoRA weights under `text/`) |
+| jaredpalmer/kev-4b | `6cfce5c2fa4b4bd64026336ab649c5ca78857d52` | none (weights; code is the pinned `kev` git commit) |
+| togethercomputer/Tev1-4B-experimental | `0b7becf017daa0e5eb222f8ce7483c8c8259c52f` | none (served by Ollama or Together; recorded for reference) |
+
+Not pinned by this repo: the base models the upstreams fetch themselves (`Qwen/Qwen3.5-4B` for CUA through transformers; Kev reads `base_revision` from its own pinned config), and Ollama's `tev1` tag.
