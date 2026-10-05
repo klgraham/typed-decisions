@@ -480,7 +480,7 @@ def create_app(router, **kwargs):  # an app that catches BaseException while the
     async def app(scope, receive, send):
         if scope["type"] == "http" and scope["path"] == "/busy":
             try:
-                end = time.monotonic() + 20
+                end = time.monotonic() + 2
                 while time.monotonic() < end:
                     pass
             except BaseException:
@@ -509,7 +509,7 @@ def test_a_signal_swallowed_inside_a_request_still_stops_serve():
         wait_for(lambda: router_up(port))
         busy.start()
         time.sleep(0.5)  # the event loop is now spinning inside /busy
-        process.send_signal(signal.SIGHUP)  # uvicorn does not handle SIGHUP, so our handler raises inside /busy
+        process.send_signal(signal.SIGHUP)  # our stop hook handles SIGHUP while /busy runs
         time.sleep(0.2)
         process.send_signal(signal.SIGTERM)  # ignored from the first signal on
         assert process.wait(timeout=cli.SHUTDOWN_GRACE + 15) == 129
@@ -517,3 +517,84 @@ def test_a_signal_swallowed_inside_a_request_still_stops_serve():
         if process.poll() is None:
             process.kill()
             process.wait()
+
+
+SIGNAL_DURING_DISPATCH = """\
+import asyncio, dataclasses, inspect, os, signal, sys
+from pathlib import Path
+import uvicorn
+from systemone_serve import cli, launch
+from systemone_serve.catalog import BY_ID, Step
+from systemone_serve.router import Router
+
+port, upstream_port, pid_file, should_launch, signum = sys.argv[1:]
+spec = dataclasses.replace(BY_ID['uniform-baseline'],
+    url=f'http://127.0.0.1:{upstream_port}',
+    launch=(Step(command=('{python}', '-m', 'systemone_serve.cli', 'serve',
+                          '--model', 'uniform-baseline', '--port', '{port}'), ready_path='/health'),))
+cli.build_router = lambda args: Router([spec])
+real_start = launch.start
+def start(command, env):
+    process = real_start(command, env)
+    Path(pid_file).write_text(str(process.pid))
+    return process
+launch.start = start
+# Exercise the stdlib callback queue even if uvloop is installed.
+uvicorn.Config.get_loop_factory = lambda self: asyncio.new_event_loop
+lines, first_line = inspect.getsourcelines(asyncio.BaseEventLoop._run_once)
+dispatch_line = max(first_line + i for i, line in enumerate(lines) if line.strip() == 'handle._run()')
+fired = False
+def trace(frame, event, arg):
+    global fired
+    if not fired and event == 'line' and frame.f_code is asyncio.BaseEventLoop._run_once.__code__ and frame.f_lineno == dispatch_line:
+        handle = frame.f_locals['handle']
+        task = getattr(handle._callback, '__self__', None)
+        if isinstance(task, asyncio.Task):
+            coro = task.get_coro()
+            server = coro.cr_frame.f_locals.get('self') if getattr(coro, 'cr_frame', None) else None
+            if isinstance(server, uvicorn.Server) and server.started and getattr(handle._callback, '__name__', '') == 'task_wakeup':
+                assert task._fut_waiter.done() and handle not in frame.f_locals['self']._ready
+                fired = True
+                print('SIGNAL_AFTER_DEQUEUE', flush=True)
+                signal.raise_signal(int(signum))
+                if int(signum) == signal.SIGHUP:
+                    # A second stop signal must neither interrupt cleanup nor replace SIGHUP.
+                    signal.raise_signal(signal.SIGTERM)
+    return trace
+sys.settrace(trace)
+args = ['serve', '--port', port, '--model', 'uniform-baseline']
+if should_launch == 'yes':
+    args.append('--launch')
+sys.exit(cli.main(args))
+"""
+
+
+@pytest.mark.parametrize("with_launch", [False, True])
+@pytest.mark.parametrize("signum", [signal.SIGHUP, signal.SIGINT, signal.SIGTERM])
+def test_stop_signal_after_dequeuing_a_task_wakeup_exits_and_cleans_up(tmp_path, with_launch, signum):
+    port, upstream_port = free_port(), free_port()
+    pid_file = tmp_path / "upstream.pid"
+    env = {key: value for key, value in os.environ.items()
+           if key in {"PATH", "HOME", "LANG", "TMPDIR", "PYTHONPATH"}}
+    process = subprocess.Popen([sys.executable, "-c", SIGNAL_DURING_DISPATCH, str(port), str(upstream_port),
+                                str(pid_file), "yes" if with_launch else "no", str(int(signum))],
+                               env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        stdout, stderr = process.communicate(timeout=15)
+        assert b"SIGNAL_AFTER_DEQUEUE" in stdout, stderr.decode()
+        assert process.returncode == 128 + signum, stderr.decode()
+        assert not router_up(port)
+        if with_launch:
+            assert pid_file.exists()
+            assert not router_up(upstream_port)
+            with pytest.raises(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), 0)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        if pid_file.exists():
+            try:
+                os.killpg(int(pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
