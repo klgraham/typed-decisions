@@ -1,14 +1,102 @@
 [project]
 name = "systemone-serve"
 version = "0.1.0"
-description = "Add your description here"
+description = "Serve decision models through a System One-compatible API and compare them with hosted Jev and LLMs."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Ken Graham", email = "851943+klgraham@users.noreply.github.com" }
 ]
-requires-python = ">=3.10"
-dependencies = []
+requires-python = ">=3.12"
+dependencies = [
+    "typesafe-sdk==0.7.2",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "huggingface-hub>=1.31",
+]
+
+[project.optional-dependencies]
+# LLM comparison through TypeSafe's adapter. Pick the provider you will call.
+llm-openai = ["system-one-adapter[openai]==0.2.1"]
+llm-anthropic = ["system-one-adapter[anthropic]==0.2.1"]
+llm-gemini = ["system-one-adapter[gemini]==0.2.1"]
+
+# One local model per environment: these extras are declared mutually exclusive below
+# because their torch pins conflict (kev <2.9, pplx ==2.14.0, vLLM 0.29.0 -> 2.13.0).
+# Pins are the ones each upstream prints; see docs/serving-and-dependencies.md.
+pplx = [
+    # perplexity-ai/pplx-decider-v1-27b inference.py and source/pyproject.toml (autojev 0.2.0)
+    "torch==2.14.0",
+    "torchvision==0.29.0",
+    "transformers==5.17.0",
+    "accelerate==1.15.0",
+    "huggingface-hub==1.31.0",
+    "pillow==12.3.0",
+    "safetensors==0.8.0",
+    "fastapi==0.141.1",
+    "uvicorn==0.52.4",
+]
+openjev = [
+    # openjev/openjev serve/SERVE.md: vLLM + helper/shim.py (CUDA, Linux)
+    "vllm==0.29.0; sys_platform == 'linux'",
+    "openai==3.16.2",
+    "httpx==0.28.1",
+    "transformers==5.17.0",
+]
+openjev-mlx = [
+    # openjev/openjev-MLX siblings: text-only on Apple silicon
+    "mlx==0.32.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm==0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "transformers==5.17.0",
+    "openai==3.16.2",
+    "huggingface-hub==1.32.0",
+]
+kev = [
+    # jaredpalmer/kev is not on PyPI; pinned to the commit reviewed on 2026-10-04.
+    "kev[serve] @ git+https://github.com/jaredpalmer/kev@fe64b1274ea7f80d4095866df90666abb03e9cf6",
+]
+clef = [
+    # Cloudflare/clef and clef-flash: joint_schema_model.py, tested with torch 2.11 and transformers 5.10.2
+    "torch>=2.11",
+    "transformers>=5.10.2,<6",
+    "safetensors",
+    "pillow",
+]
+cua = [
+    # trycua/cua libs/cua-s1 four-b extra; pinned to the commit reviewed on 2026-10-04.
+    "cua-s1[four-b] @ git+https://github.com/trycua/cua@2b3e4e548c6d27f918f5367f84c094151aa10c8f#subdirectory=libs/cua-s1/python",
+]
+
+[project.scripts]
+systemone-serve = "systemone_serve.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.28",
+    "system-one-adapter==0.2.1",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "pplx" },
+        { extra = "openjev" },
+        { extra = "openjev-mlx" },
+        { extra = "kev" },
+        { extra = "clef" },
+        { extra = "cua" },
+    ],
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: needs a key, weights, or a running upstream; skipped otherwise"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
