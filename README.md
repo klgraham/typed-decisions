@@ -81,11 +81,11 @@ sys1 compare examples/support-ticket.json \
 sys1 download clef-flash                            # Hugging Face snapshot; prints the path
 ```
 
-A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range, probabilities only for real options and summing to at most 1; an upstream that reports only its top-k options is fine); a violation is `backend_failed`.
+A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range, probabilities only for real options and summing to at most 1 plus a rounding allowance of 0.005 per reported option, at least 0.02; an upstream that reports only its top-k options is fine); a violation is `backend_failed`.
 
-`serve --launch` runs each upstream in its own process group with only the keys it needs (its own auth variable and `HF_TOKEN`). SIGTERM, SIGHUP, or Ctrl-C stops the whole group before exit, including during the readiness wait. A port that is already taken fails the launch instead of being mistaken for the new upstream.
+`serve --launch` runs each upstream in its own process group with only the keys it needs (its own auth variable and `HF_TOKEN`). SIGTERM, SIGHUP, or Ctrl-C stops the whole group before exit, including during the readiness wait. A port that is already taken fails the launch instead of being mistaken for the new upstream. Each upstream listens on its URL's host (`SYSTEMONE_<ID>_URL` may name `127.0.0.1`, another `127.x` address, `localhost`, or `[::1]`), and the port check and readiness probe use that host too; an upstream that cannot listen there (the OpenJev shim is IPv4-only) is refused up front. One gap is left: if the router itself is SIGKILLed (or OOM-killed), no cleanup runs. On Linux each launched upstream still gets SIGTERM, but a process that upstream started (a grandchild) can survive, unless the upstream stops its own workers as `ollama serve` does. On other systems the upstreams themselves keep running.
 
-`serve` refuses a non-loopback `--host` (loopback is `localhost`, `127.0.0.0/8`, or `::1`; `0.0.0.0` and `::` listen on every interface, so they count as non-loopback) unless `SYSTEMONE_SERVE_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
+`serve` refuses a non-loopback `--host` (loopback is `localhost`, `127.0.0.0/8`, or `::1`; `0.0.0.0` and `::` listen on every interface, so they count as non-loopback; `::` is IPv6-only and does not answer on `127.0.0.1`) unless `SYSTEMONE_SERVE_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
 
 `compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`. NAME cannot be a catalog id (set that model's `SYSTEMONE_<ID>_URL` instead), and URL cannot be the router itself.
 
@@ -110,7 +110,7 @@ Example `compare` output (trimmed):
 | --- | --- | --- |
 | 0 | success | 200 |
 | 1 | unexpected error (bug; traceback on stderr) | 500 |
-| 2 | invalid input: arguments, JSON, question shape, unknown model, port in use, unauthenticated non-loopback `--host` | 422 / 404 |
+| 2 | invalid input: arguments, JSON, question shape, unknown model, the router's port in use (on any address `--host` resolves to, even if taken just after the check), unauthenticated non-loopback `--host` | 422 / 404 |
 | 3 | backend unavailable: missing extra, hardware, an API key unset or rejected (401/403), or a stopped upstream | 503 |
 | 4 | backend failed: upstream or model error, or an answer outside the contract | 502 |
 | 5 | `compare` only: at least one target failed (details in the JSON) | n/a |
