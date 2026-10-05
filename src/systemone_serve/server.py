@@ -1,7 +1,8 @@
 """The HTTP surface: POST /v1/systemone, GET /v1/models, GET /health. Optional Bearer auth for this server.
 
 POST /v1/systemone refuses (HTTP 508, `loop_detected`) a request whose hop header already names this router, or that
-has passed through MAX_HOPS routers, so a misrouted upstream cannot make the router call itself without end."""
+has passed through MAX_HOPS routers, so a misrouted upstream cannot make the router call itself without end. A hop header
+with an entry that is not a router id (see `hop_chain`) is `invalid_request` (422), before anything is forwarded."""
 
 import hmac
 import json
@@ -42,7 +43,10 @@ def create_app(router: Router, api_key: str | None = None) -> FastAPI:
     async def systemone(request: Request) -> JSONResponse:
         if (denied := unauthorized(request)) is not None:
             return denied
-        via = hop_chain(request.headers.get(HOP_HEADER))
+        try:
+            via = hop_chain(request.headers.get(HOP_HEADER))
+        except ServeError as error:
+            return JSONResponse(error_body(error), status_code=error.status)
         if router.instance in via or len(via) >= MAX_HOPS:
             return JSONResponse({"error": {"code": "loop_detected", "message": (
                 f"This request already passed through this router ({HOP_HEADER} has {len(via)} hop(s)): an upstream "

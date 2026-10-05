@@ -8,10 +8,14 @@ returned as is, except that `model` becomes the router id and the upstream's own
 Every request to a local upstream carries `x-systemone-serve-via`: the routers it has passed through (`Request.via`,
 which the router appends itself to). A router refuses a request that already names it (see `server`), so an upstream
 URL that leads back to it, directly, through a hostname alias, or through another router, fails once instead of
-recursing.
+recursing. Router ids are tokens (letters, digits, `_`, `-`, at most HOP_ENTRY_MAX characters); a header with any other
+entry is refused as `invalid_request` before anything is forwarded, since it could not be sent on as a header value.
 """
 
+import json
 import os
+import re
+from collections.abc import Iterable
 from typing import Any
 
 import httpx2
@@ -34,10 +38,28 @@ JEV_KEY_ENV = "TYPESAFE_API_KEY"
 NO_KEY = "local"
 HOP_HEADER = "x-systemone-serve-via"
 MAX_HOPS = 8
+HOP_ENTRY_MAX = 64
+HOP_ENTRY = re.compile(rf"[A-Za-z0-9_-]{{1,{HOP_ENTRY_MAX}}}")
 
 
 def hop_chain(header: str | None) -> list[str]:
-    return [part.strip() for part in (header or "").split(",") if part.strip()]
+    """The router ids in a hop header, in order. Empty entries are dropped; any other malformed entry is InvalidRequest."""
+    entries = [part.strip(" \t") for part in (header or "").split(",")]
+    entries = [entry for entry in entries if entry]
+    check_hops(entries)
+    return entries
+
+
+def check_hops(entries: Iterable[str]) -> None:
+    """Raise InvalidRequest unless every entry is a router id: letters, digits, `_` or `-`, 1 to HOP_ENTRY_MAX long.
+    The message gives the entry's position and length, not its text."""
+    for position, entry in enumerate(entries, 1):
+        if HOP_ENTRY.fullmatch(entry):
+            continue
+        problem = (f"is {len(entry)} characters long (at most {HOP_ENTRY_MAX})" if len(entry) > HOP_ENTRY_MAX
+                   else "has a character other than ASCII letters, digits, '_' and '-'")
+        raise InvalidRequest(f"{HOP_HEADER} entry {position} {problem}. The header lists router ids separated by "
+                             "commas; send it as the router set it, or not at all.")
 
 
 class SystemOneHTTP:
@@ -96,13 +118,16 @@ class SystemOneHTTP:
     def evaluate(self, request: Request) -> dict[str, Any]:
         api_key = self._api_key()
         model = self.upstream_model or request.model
-        headers = {HOP_HEADER: ",".join(request.via)} if self.hop and request.via else None
+        headers = None
+        if self.hop and request.via:
+            check_hops(request.via)  # a library caller's chain, too: only tokens are ever forwarded
+            headers = {HOP_HEADER: ",".join(request.via)}
         try:
             with TypeSafeClient(api_key=api_key, base_url=self.base_url, model=model, retry=self.retry,
                                 timeout=self.timeout, transport=self.transport) as client:
                 result = client.system_one(request.state, request.questions, model=model,
                                            extra_body=request.extra or None, extra_headers=headers)
-                body = result.raw_http_response.json()
+                body = self._json(result.raw_http_response)
         except TypeSafeAPIConnectionError as error:
             raise BackendUnavailable(f"{self.name}: cannot reach {self.base_url} ({error}). {self.hint}".strip()) from error
         except (TypeSafeUnprocessableEntityError, TypeSafeBadRequestError) as error:
@@ -116,8 +141,14 @@ class SystemOneHTTP:
             raise BackendFailed(f"{self.name}: upstream returned HTTP {error.status}: {error}") from error
         except TypeSafeError as error:
             raise BackendUnavailable(f"{self.name}: {error}") from error
-        except ValueError as error:  # a 200 whose body is not JSON
-            raise BackendFailed(f"{self.name}: upstream body is not JSON: {error}") from error
         if self.label and isinstance(body, dict) and body.get("model") != self.label:
             body = {**body, "model": self.label, "upstream_model": body.get("model")}
         return body
+
+    def _json(self, response: httpx2.Response) -> Any:
+        """Only a body that does not decode is "not JSON"; any other ValueError (an encoding error while sending, for
+        one) is not caught here, so it cannot pass for a bad body."""
+        try:
+            return response.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:  # a 200 whose body is not JSON
+            raise BackendFailed(f"{self.name}: upstream body is not JSON: {error}") from error
