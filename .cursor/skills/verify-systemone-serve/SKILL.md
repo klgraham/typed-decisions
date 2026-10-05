@@ -85,7 +85,7 @@ Stops only the instances (servers and taps) this run launched, newest first. For
 
 ## Helpers
 
-`scripts/verify.py` (Python 3.9+ standard library only, with a `#!/usr/bin/env python3` line). `$S` runs it through `python3`, so it works whether or not the executable bit survived checkout; after `chmod +x` it also runs directly:
+`scripts/verify.py` (Python 3.9+ standard library only). `$S` runs it with `python3`, so it needs no executable bit and works the same on any checkout:
 
 | Command | What it does |
 | --- | --- |
