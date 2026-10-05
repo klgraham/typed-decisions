@@ -465,3 +465,55 @@ def test_sigterm_is_bounded_while_a_request_waits_on_a_hung_upstream():
     assert process.returncode == 143
     assert elapsed < cli.SHUTDOWN_GRACE + cli.EXIT_GRACE + 5
     assert b"still waiting on an upstream" in stderr
+
+
+SWALLOWS_SIGNALS = """\
+import sys, time
+from systemone_serve import cli, server
+
+real = server.create_app
+
+
+def create_app(router, **kwargs):  # an app that catches BaseException while the signal lands, as uvicorn's request
+    inner = real(router, **kwargs)  # cycle and asyncio's socket writes do
+
+    async def app(scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/busy":
+            try:
+                end = time.monotonic() + 20
+                while time.monotonic() < end:
+                    pass
+            except BaseException:
+                pass
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"swallowed"})
+            return
+        await inner(scope, receive, send)
+
+    return app
+
+
+server.create_app = create_app
+sys.exit(cli.main(["serve", "--port", sys.argv[1], "--model", "uniform-baseline"]))
+"""
+
+
+def test_a_signal_swallowed_inside_a_request_still_stops_serve():
+    port = free_port()
+    env = {key: value for key, value in os.environ.items() if key != "TYPESAFE_API_KEY"}
+    process = subprocess.Popen([sys.executable, "-c", SWALLOWS_SIGNALS, str(port)], env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    busy = threading.Thread(target=lambda: urllib.request.urlopen(f"http://127.0.0.1:{port}/busy", timeout=30).read(),
+                            daemon=True)
+    try:
+        wait_for(lambda: router_up(port))
+        busy.start()
+        time.sleep(0.5)  # the event loop is now spinning inside /busy
+        process.send_signal(signal.SIGHUP)  # uvicorn does not handle SIGHUP, so our handler raises inside /busy
+        time.sleep(0.2)
+        process.send_signal(signal.SIGTERM)  # ignored from the first signal on
+        assert process.wait(timeout=cli.SHUTDOWN_GRACE + 15) == 129
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
