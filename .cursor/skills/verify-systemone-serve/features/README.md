@@ -1,6 +1,6 @@
 # systemone-serve verification map
 
-This directory is the maintained source for verifying the user-facing behavior of systemone-serve: the `sys1` CLI and the System One HTTP API that `sys1 serve` exposes. Read this index before driving anything, then use the matching feature file as the recipe. `$S` is `.cursor/skills/verify-systemone-serve/scripts/verify.py` (see `../SKILL.md`).
+This directory is the maintained source for verifying the user-facing behavior of systemone-serve: the `sys1` CLI and the System One HTTP API that `sys1 serve` exposes. Read this index before driving anything, then use the matching feature file as the recipe. `$S` is `python3 .cursor/skills/verify-systemone-serve/scripts/verify.py`, used unquoted (see `../SKILL.md`).
 
 ## Baseline preconditions
 

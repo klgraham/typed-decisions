@@ -18,7 +18,7 @@ Once per checkout: `uv sync --frozen` in the repo root (creates `.venv`; the hel
 Each verification run gets its own id, scratch directory, and evidence directory, so runs can coexist:
 
 ```bash
-S=.cursor/skills/verify-systemone-serve/scripts/verify.py
+S="python3 .cursor/skills/verify-systemone-serve/scripts/verify.py"   # use $S unquoted, as below
 eval "$($S init)"                                  # exports VERIFY_RUN_ID; prints "# evidence: <dir>"
 $S launch B -- --model uniform-baseline            # router B: an in-process model, and the upstream for A
 $S tap T --to B                                    # recording proxy in front of B (logs what reaches B)
@@ -85,7 +85,7 @@ Stops only the instances (servers and taps) this run launched, newest first. For
 
 ## Helpers
 
-`scripts/verify.py` (executable, Python 3.9+ standard library only; run it directly or with any python3):
+`scripts/verify.py` (Python 3.9+ standard library only, with a `#!/usr/bin/env python3` line). `$S` runs it through `python3`, so it works whether or not the executable bit survived checkout; after `chmod +x` it also runs directly:
 
 | Command | What it does |
 | --- | --- |
