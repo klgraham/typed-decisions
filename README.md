@@ -87,7 +87,9 @@ A local upstream's answer comes back under the router id (`"model": "kev-4b"`) w
 
 `serve` refuses a non-loopback `--host` (loopback is `localhost`, `127.0.0.0/8`, or `::1`; `0.0.0.0` and `::` listen on every interface, so they count as non-loopback; `::` is IPv6-only and does not answer on `127.0.0.1`) unless `SYSTEMONE_SERVE_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
 
-`compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`. NAME cannot be a catalog id (set that model's `SYSTEMONE_<ID>_URL` instead), and URL cannot be the router itself.
+`compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`. NAME cannot be a catalog id (set that model's `SYSTEMONE_<ID>_URL` instead). Precedence is the command line, then the environment, then the defaults: an `--upstream` URL and `#MODEL` win over `SYSTEMONE_<NAME>_URL` / `_MODEL`, and an `--upstream` without `#MODEL` takes `SYSTEMONE_<NAME>_MODEL` if set.
+
+`serve` refuses (exit 2) to start when any served model's resolved upstream URL is the router itself, whether it came from `--upstream`, `SYSTEMONE_<ID>_URL`, or the catalog default. A loop that address check cannot see (a host name alias, or two routers pointing at each other) is stopped by a hop header: each router adds its own id to `x-systemone-serve-via` when it forwards to a local upstream and answers HTTP 508 `loop_detected` to a request that already carries its id (or 8 hops), which the forwarding router reports as `backend_failed`. On SIGTERM, SIGHUP, or Ctrl-C, `serve` waits at most 5 seconds for requests in flight and, after stopping any launched upstreams, at most 2 more for requests stuck on an upstream, then exits.
 
 Example `compare` output (trimmed):
 
@@ -110,7 +112,7 @@ Example `compare` output (trimmed):
 | --- | --- | --- |
 | 0 | success | 200 |
 | 1 | unexpected error (bug; traceback on stderr), including `serve` failing to start for a reason other than its port | 500 |
-| 2 | invalid input: arguments, JSON, question shape, unknown model, the router's port in use on any address `--host` resolves to (`serve` binds them all before anything else and serves on those sockets), unauthenticated non-loopback `--host` | 422 / 404 |
+| 2 | invalid input: arguments, JSON, question shape, unknown model, the router's port in use on any address `--host` resolves to (`serve` binds and listens on them all before anything else and serves on those sockets), unauthenticated non-loopback `--host` | 422 / 404 |
 | 3 | backend unavailable: missing extra, hardware, an API key unset or rejected (401/403), or a stopped upstream | 503 |
 | 4 | backend failed: upstream or model error, or an answer outside the contract | 502 |
 | 5 | `compare` only: at least one target failed (details in the JSON) | n/a |
@@ -124,7 +126,7 @@ Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the 
 | --- | --- |
 | `TYPESAFE_API_KEY` | hosted Jev, and nothing else |
 | `SYSTEMONE_SERVE_API_KEY` | optional Bearer key this server requires; unset means open, which `serve` allows only on loopback unless `--allow-unauthenticated` |
-| `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL` |
+| `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL`; an `--upstream` URL wins over it |
 | `SYSTEMONE_<ID>_MODEL` | the model name sent to that upstream, e.g. `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL=tev1:4b-q4_K_M` for an Ollama tag other than `tev1`. Defaults: pplx `jev-latest`, OpenJev `openjev`, Ollama `tev1`, Kev `kev-latest`, Together `together/Tev1-4B-experimental`. `sys1 models` shows each `model_env` and the name in effect. Hosted Jev ignores it, as it ignores `SYSTEMONE_<ID>_URL` |
 | `KEV_API_KEY`, `AUTOJEV_API_KEY`, `SHIM_TOKEN` | Bearer keys the Kev, Perplexity, and OpenJev upstreams check; forwarded when set |
 | `TOGETHER_API_KEY`, `TOGETHER_MODEL` | `tev1-4b-experimental@together` (default model `together/Tev1-4B-experimental`; `SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL` wins over `TOGETHER_MODEL`) |
