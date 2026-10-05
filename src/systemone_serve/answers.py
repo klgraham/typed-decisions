@@ -67,7 +67,9 @@ def parse(body: Any) -> Request:
     try:
         parsed = _QUESTIONS.validate_python(questions)
     except ValidationError as error:
-        raise InvalidRequest(f"Invalid question: {error.errors(include_url=False)[0]['msg']} at {_loc(error)}") from error
+        raise InvalidRequest(
+            f"Invalid question: {error.errors(include_url=False)[0]['msg']} at {_loc(error)}"
+        ) from error
     for key, question in parsed.items():
         if isinstance(question, Choice) and not question.criteria:
             raise InvalidRequest(f'Choice question "{key}" needs at least one option in "criteria".')
@@ -136,7 +138,9 @@ def _round(value: float) -> float:
     return round(value, 4)
 
 
-def response(model: str, answers: dict[str, dict[str, Any]], input_tokens: int = 0, output_tokens: int = 0) -> dict[str, Any]:
+def response(
+    model: str, answers: dict[str, dict[str, Any]], input_tokens: int = 0, output_tokens: int = 0
+) -> dict[str, Any]:
     return {"model": model, "answers": answers, "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}}
 
 
@@ -170,7 +174,7 @@ def decimals(value: float) -> int:
 def sum_tolerance(values: Collection[float]) -> tuple[float, int]:
     """How far past 1 rounding can push the sum of these reported values, and the decimals that assumes."""
     places = max([MIN_DECIMALS, *(decimals(value) for value in values)])
-    return max(SUM_FLOOR, min(len(values) * 0.5 * 10.0 ** -places, MAX_EXCESS)), places
+    return max(SUM_FLOOR, min(len(values) * 0.5 * 10.0**-places, MAX_EXCESS)), places
 
 
 def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
@@ -188,8 +192,10 @@ def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
     if total > 1 + tolerance + 1e-9:  # 1e-9: float noise in the sum itself, far below any rounding step
         # Values with at most `places` decimals sum to a multiple of 10^-places, so rounding there drops only float
         # noise and keeps every digit of the excess: 1.0200001, never "1.02".
-        raise BackendFailed(f"{where}: probabilities sum to {round(total, places)!r}, more than 1 + {tolerance:g} "
-                            f"(the rounding allowance for {len(probabilities)} options reported to {places} decimals).")
+        raise BackendFailed(
+            f"{where}: probabilities sum to {round(total, places)!r}, more than 1 + {tolerance:g} "
+            f"(the rounding allowance for {len(probabilities)} options reported to {places} decimals)."
+        )
 
 
 def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
@@ -205,7 +211,9 @@ def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
     except ValidationError as error:
         first = error.errors(include_url=False)[0]
         where = ".".join(str(part) for part in first["loc"])
-        raise BackendFailed(f"{name}: response is outside the System One contract: {first['msg']} at {where}.") from error
+        raise BackendFailed(
+            f"{name}: response is outside the System One contract: {first['msg']} at {where}."
+        ) from error
     answers = result["answers"]
     extra = sorted(set(answers) - set(request.questions))
     missing = sorted(set(request.questions) - set(answers))
@@ -236,6 +244,8 @@ def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
             if legend is not None and set(legend) != set(keys):
                 raise BackendFailed(f"{where}: legend must be keyed by exactly {keys}.")
     usage = result["usage"]
-    if not all(_number(usage[k]) and usage[k] >= 0 and float(usage[k]).is_integer() for k in ("input_tokens", "output_tokens")):
+    if not all(
+        _number(usage[k]) and usage[k] >= 0 and float(usage[k]).is_integer() for k in ("input_tokens", "output_tokens")
+    ):
         raise BackendFailed(f"{name}: usage token counts must be non-negative whole numbers.")
     return result

@@ -115,8 +115,12 @@ CATALOG: tuple[ModelSpec, ...] = (
             Step(
                 command=("{python}", "-m", "autojev.server"),
                 ready_path="/v1/models",
-                env={"PYTHONPATH": "{snapshot}/source/src", "AUTOJEV_CHECKPOINT": "{snapshot}", "PORT": "{port}",
-                     "AUTOJEV_HOST": "{host}"},
+                env={
+                    "PYTHONPATH": "{snapshot}/source/src",
+                    "AUTOJEV_CHECKPOINT": "{snapshot}",
+                    "PORT": "{port}",
+                    "AUTOJEV_HOST": "{host}",
+                },
             ),
         ),
     ),
@@ -137,11 +141,31 @@ CATALOG: tuple[ModelSpec, ...] = (
         launch=(
             Step(
                 command=(
-                    "vllm", "serve", "{snapshot}", "--host", "127.0.0.1", "--served-model-name", "qwen",
-                    "--port", "8100", "--enable-prefix-caching", "--max-model-len", "16384",
-                    "--gpu-memory-utilization", "0.90", "--limit-mm-per-prompt", '{{"image":1}}',
-                    "--trust-remote-code", "--max-num-seqs", "256", "--max-logprobs", "64",
-                    "--gdn-prefill-backend", "triton", "--quantization", "fp8",
+                    "vllm",
+                    "serve",
+                    "{snapshot}",
+                    "--host",
+                    "127.0.0.1",
+                    "--served-model-name",
+                    "qwen",
+                    "--port",
+                    "8100",
+                    "--enable-prefix-caching",
+                    "--max-model-len",
+                    "16384",
+                    "--gpu-memory-utilization",
+                    "0.90",
+                    "--limit-mm-per-prompt",
+                    '{{"image":1}}',
+                    "--trust-remote-code",
+                    "--max-num-seqs",
+                    "256",
+                    "--max-logprobs",
+                    "64",
+                    "--gdn-prefill-backend",
+                    "triton",
+                    "--quantization",
+                    "fp8",
                 ),
                 ready_path="/health",
                 port=8100,
@@ -177,7 +201,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         upstream_model="tev1",
         launch=(Step(command=("ollama", "serve"), ready_path="/api/version", env={"OLLAMA_HOST": "{hostport}"}),),
         notes="Run `ollama pull tev1` once, or set SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL to the tag you pulled (e.g. "
-              "tev1:4b-q4_K_M). Ollama builds Tev1's prompt itself; inputs should stay under ~2,000 tokens.",
+        "tev1:4b-q4_K_M). Ollama builds Tev1's prompt itself; inputs should stay under ~2,000 tokens.",
     ),
     ModelSpec(
         id="tev1-4b-experimental@together",
@@ -222,8 +246,17 @@ CATALOG: tuple[ModelSpec, ...] = (
         auth_env="KEV_API_KEY",
         launch=(
             Step(
-                command=("{python}", "-m", "kev.serve", "--run", "jaredpalmer/kev-4b@{revision}", "--host", "{host}",
-                         "--port", "{port}"),
+                command=(
+                    "{python}",
+                    "-m",
+                    "kev.serve",
+                    "--run",
+                    "jaredpalmer/kev-4b@{revision}",
+                    "--host",
+                    "{host}",
+                    "--port",
+                    "{port}",
+                ),
                 ready_path="/v1/models",
             ),
         ),
@@ -273,8 +306,12 @@ TOGETHER_MODEL_ENV = "TOGETHER_MODEL"  # the older, Together-only override; SYST
 
 
 def together_model(spec: ModelSpec) -> str:
-    return (os.environ.get(spec.model_env, "").strip() or os.environ.get(TOGETHER_MODEL_ENV, "").strip()
-            or spec.upstream_model or "")
+    return (
+        os.environ.get(spec.model_env, "").strip()
+        or os.environ.get(TOGETHER_MODEL_ENV, "").strip()
+        or spec.upstream_model
+        or ""
+    )
 
 
 def extra_installed(spec: ModelSpec) -> bool:

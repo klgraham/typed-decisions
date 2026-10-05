@@ -12,11 +12,15 @@ class FakeProvider:
     model_name = "fake-llm"
 
     def request(self, messages, *, schema, structured):
-        text = json.dumps({"answers": {
-            "is_urgent": 0.9,
-            "department": {"billing": 0.8, "technical": 0.15, "sales": 0.05},
-            "frustration": {"0": 0.1, "1": 0.6, "2": 0.3},
-        }})
+        text = json.dumps(
+            {
+                "answers": {
+                    "is_urgent": 0.9,
+                    "department": {"billing": 0.8, "technical": 0.15, "sales": 0.05},
+                    "frustration": {"0": 0.1, "1": 0.6, "2": 0.3},
+                }
+            }
+        )
         return ProviderResult(text=text, input_tokens=100, output_tokens=20)
 
     def translate_error(self, error):
@@ -43,9 +47,15 @@ def test_compare_local_baseline_jev_without_key_and_llm_through_real_adapter(bod
     assert llm["ok"] is True, llm.get("error")
     assert llm["response"]["answers"]["department"]["choice"] == "billing"
     assert result["questions"]["department"] == {
-        "type": "choice", "values": {"uniform-baseline": "billing", "llm:fake:fake-llm": "billing"}, "agree": True}
+        "type": "choice",
+        "values": {"uniform-baseline": "billing", "llm:fake:fake-llm": "billing"},
+        "agree": True,
+    }
     assert result["questions"]["is_urgent"] == {
-        "type": "noul", "values": {"uniform-baseline": 0.5, "llm:fake:fake-llm": 0.9}, "spread": 0.4}
+        "type": "noul",
+        "values": {"uniform-baseline": 0.5, "llm:fake:fake-llm": 0.9},
+        "spread": 0.4,
+    }
 
 
 def test_summary_without_successes_has_no_agreement(body):

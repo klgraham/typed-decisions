@@ -37,8 +37,11 @@ def create_app(router: Router, api_key: str | None = None) -> FastAPI:
             return None
         if hmac.compare_digest(request.headers.get("authorization", "").encode(), f"Bearer {key}".encode()):
             return None
-        return JSONResponse({"error": {"code": "unauthorized", "message": "Missing or invalid API key."}},
-                            status_code=401, headers={"WWW-Authenticate": "Bearer"})
+        return JSONResponse(
+            {"error": {"code": "unauthorized", "message": "Missing or invalid API key."}},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     @app.post("/v1/systemone")
     async def systemone(request: Request) -> JSONResponse:
@@ -51,21 +54,34 @@ def create_app(router: Router, api_key: str | None = None) -> FastAPI:
         except ServeError as error:
             return JSONResponse(error_body(error), status_code=error.status)
         if router.instance in via or len(via) >= MAX_HOPS:
-            return JSONResponse({"error": {"code": "loop_detected", "message": (
-                f"This request already passed through this router ({HOP_HEADER} has {len(via)} hop(s)): an upstream "
-                "URL leads back to it. Point that model's upstream somewhere else.")}}, status_code=508)
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": "loop_detected",
+                        "message": (
+                            f"This request already passed through this router ({HOP_HEADER} has {len(via)} hop(s)): an upstream "
+                            "URL leads back to it. Point that model's upstream somewhere else."
+                        ),
+                    }
+                },
+                status_code=508,
+            )
         try:
             body = json.loads(await request.body())
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            return JSONResponse({"error": {"code": "invalid_request", "message": f"Body is not UTF-8 JSON: {error}"}}, status_code=422)
+            return JSONResponse(
+                {"error": {"code": "invalid_request", "message": f"Body is not UTF-8 JSON: {error}"}}, status_code=422
+            )
         try:
             return JSONResponse(await run_in_threadpool(router.evaluate, body, via))
         except ServeError as error:
             return JSONResponse(error_body(error), status_code=error.status)
         except Exception as error:  # a bug in this package; the router already maps every backend failure
             log.error("unexpected error\n%s", scrub(traceback.format_exc()))  # scrubbed: it may quote a body or key
-            return JSONResponse({"error": {"code": "internal_error", "message": scrub(f"{type(error).__name__}: {error}")}},
-                                status_code=500)
+            return JSONResponse(
+                {"error": {"code": "internal_error", "message": scrub(f"{type(error).__name__}: {error}")}},
+                status_code=500,
+            )
 
     @app.get("/v1/models")
     async def models(request: Request) -> JSONResponse:

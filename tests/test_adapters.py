@@ -49,8 +49,11 @@ def test_cua_scores_each_question_as_one_option_set(body):
     assert result["model"] == "cua-s1-4b-0.2"
     assert result["answers"]["is_urgent"] == {"type": "noul", "noul": 0.7}
     assert result["answers"]["department"] == {
-        "type": "choice", "choice": "billing", "probabilities": {"billing": 0.7, "technical": 0.15, "sales": 0.15},
-        "confidence": 0.7}
+        "type": "choice",
+        "choice": "billing",
+        "probabilities": {"billing": 0.7, "technical": 0.15, "sales": 0.15},
+        "confidence": 0.7,
+    }
     assert result["answers"]["frustration"]["score"] == 0.45
     first = fake.calls[1]
     assert [o.label for o in first["options"]] == ["Payments, invoicing, refunds", "Bugs, outages", "sales"]
@@ -58,31 +61,70 @@ def test_cua_scores_each_question_as_one_option_set(body):
 
 
 def test_cua_rejects_more_options_than_letters():
-    request = parse({"model": "cua-s1-4b-0.2", "state": "s",
-                     "questions": {"q": {"type": "choice", "criteria": {f"o{i}": None for i in range(27)}}}})
+    request = parse(
+        {
+            "model": "cua-s1-4b-0.2",
+            "state": "s",
+            "questions": {"q": {"type": "choice", "criteria": {f"o{i}": None for i in range(27)}}},
+        }
+    )
     with pytest.raises(InvalidRequest, match="at most 26"):
         Cua(BY_ID["cua-s1-4b-0.2"], load=lambda: (FakeFourB(), FakeOption)).evaluate(request)
 
 
 def test_tev1_payload_matches_upstream_decide_py():
-    request = parse({"model": "m", "state": "Returns within 30 days. Bought 12 days ago.",
-                     "questions": {"q": {"type": "noul", "instructions": "Is the return within the window?"}}})
+    request = parse(
+        {
+            "model": "m",
+            "state": "Returns within 30 days. Bought 12 days ago.",
+            "questions": {"q": {"type": "noul", "instructions": "Is the return within the window?"}},
+        }
+    )
     from systemone_serve.answers import options
 
-    sent = payload(request.state, request.questions["q"].instructions, options(request.questions["q"]), "together/Tev1-4B-experimental")
+    sent = payload(
+        request.state,
+        request.questions["q"].instructions,
+        options(request.questions["q"]),
+        "together/Tev1-4B-experimental",
+    )
     assert sent["messages"][0]["content"].startswith("Evaluate the supplied decision task.")
     assert json.loads(sent["messages"][1]["content"]) == {
-        "state": "Returns within 30 days. Bought 12 days ago.", "question": "Is the return within the window?",
-        "options": [{"label": "A", "key": "true", "description": "Yes"}, {"label": "B", "key": "false", "description": "No"}]}
+        "state": "Returns within 30 days. Bought 12 days ago.",
+        "question": "Is the return within the window?",
+        "options": [
+            {"label": "A", "key": "true", "description": "Yes"},
+            {"label": "B", "key": "false", "description": "No"},
+        ],
+    }
     assert sent["response_format"] == {"type": "regex", "pattern": "(A|B)"}
     assert (sent["temperature"], sent["max_tokens"], sent["top_logprobs"]) == (0, 8, 5)
     assert sent["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 def test_letter_probabilities_reads_openai_and_legacy_shapes():
-    openai_style = {"choices": [{"message": {"content": "A"}, "logprobs": {"content": [
-        {"token": "A", "logprob": -0.1053605, "top_logprobs": [{"token": "A", "logprob": -0.1053605}, {"token": "B", "logprob": -2.302585}]}]}}]}
-    legacy = {"choices": [{"message": {"content": "B"}, "logprobs": {"top_logprobs": [{" B": -0.5, "A": -1.0, "Z": -0.1}]}}]}
+    openai_style = {
+        "choices": [
+            {
+                "message": {"content": "A"},
+                "logprobs": {
+                    "content": [
+                        {
+                            "token": "A",
+                            "logprob": -0.1053605,
+                            "top_logprobs": [
+                                {"token": "A", "logprob": -0.1053605},
+                                {"token": "B", "logprob": -2.302585},
+                            ],
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    legacy = {
+        "choices": [{"message": {"content": "B"}, "logprobs": {"top_logprobs": [{" B": -0.5, "A": -1.0, "Z": -0.1}]}}]
+    }
     no_logprobs = {"choices": [{"message": {"content": "B"}}]}
     assert {k: round(v, 3) for k, v in letter_probabilities(openai_style, ["A", "B"]).items()} == {"A": 0.9, "B": 0.1}
     assert {k: round(v, 3) for k, v in letter_probabilities(legacy, ["A", "B"]).items()} == {"B": 0.607, "A": 0.368}
@@ -95,8 +137,12 @@ def test_tev1_together_end_to_end_with_fake_api(monkeypatch, body):
 
     def post(url, request_body, key):
         sent.append((url, request_body, key))
-        return {"choices": [{"message": {"content": "A"}, "logprobs": {"top_logprobs": [{"A": -0.2231436, "B": -1.6094379}]}}],
-                "usage": {"prompt_tokens": 50, "completion_tokens": 1}}
+        return {
+            "choices": [
+                {"message": {"content": "A"}, "logprobs": {"top_logprobs": [{"A": -0.2231436, "B": -1.6094379}]}}
+            ],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 1},
+        }
 
     result = Tev1Together(BY_ID["tev1-4b-experimental@together"], post=post).evaluate(parse(body))
     assert result["answers"]["is_urgent"] == {"type": "noul", "noul": 0.8}
@@ -107,12 +153,20 @@ def test_tev1_together_end_to_end_with_fake_api(monkeypatch, body):
     assert sent[0][2] == "tg-test"
 
 
-@pytest.mark.parametrize("env, model", [
-    ({}, "together/Tev1-4B-experimental"),
-    ({"TOGETHER_MODEL": "together/older-name"}, "together/older-name"),
-    ({"TOGETHER_MODEL": "together/older-name", "SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL": "together/newer"},
-     "together/newer"),
-])
+@pytest.mark.parametrize(
+    "env, model",
+    [
+        ({}, "together/Tev1-4B-experimental"),
+        ({"TOGETHER_MODEL": "together/older-name"}, "together/older-name"),
+        (
+            {
+                "TOGETHER_MODEL": "together/older-name",
+                "SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL": "together/newer",
+            },
+            "together/newer",
+        ),
+    ],
+)
 def test_tev1_together_model_env_is_what_is_sent(monkeypatch, body, env, model):
     monkeypatch.setenv("TOGETHER_API_KEY", "tg-test")
     for name in ("TOGETHER_MODEL", "SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL"):
@@ -123,8 +177,10 @@ def test_tev1_together_model_env_is_what_is_sent(monkeypatch, body, env, model):
 
     def post(url, request_body, key):
         sent.append(request_body["model"])
-        return {"choices": [{"message": {"content": "A"}, "logprobs": {"top_logprobs": [{"A": -0.1, "B": -2.4}]}}],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 1}}
+        return {
+            "choices": [{"message": {"content": "A"}, "logprobs": {"top_logprobs": [{"A": -0.1, "B": -2.4}]}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 1},
+        }
 
     Tev1Together(BY_ID["tev1-4b-experimental@together"], post=post).evaluate(parse(body))
     assert set(sent) == {model}

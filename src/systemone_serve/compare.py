@@ -5,7 +5,7 @@ system-one-adapter, or `url:<base_url>[#model]` for any other System One server.
 """
 
 import time
-from typing import Any
+from typing import Any, Literal, cast
 
 from systemone_serve import answers
 from systemone_serve.backends import Backend
@@ -27,16 +27,22 @@ class LLM:
         try:
             from system_one_adapter import SystemOneAdapterClient
         except ImportError as error:
-            raise BackendUnavailable(f"system-one-adapter is not installed. Install: uv sync --extra llm-{provider}") from error
+            raise BackendUnavailable(
+                f"system-one-adapter is not installed. Install: uv sync --extra llm-{provider}"
+            ) from error
         self.provider = provider
         self.model = model
-        self.client = SystemOneAdapterClient(structured_outputs=True, llm_answer_mode="probabilities",
-                                             n_retry_malformed_structure=1)
+        self.client = SystemOneAdapterClient(
+            structured_outputs=True, llm_answer_mode="probabilities", n_retry_malformed_structure=1
+        )
 
     def evaluate(self, request: answers.Request) -> dict[str, Any]:
         from typesafe_sdk import TypeSafeError
 
-        provider = None if not isinstance(self.model, str) else self.provider
+        # The adapter validates provider names; custom provider objects use no name.
+        provider = (
+            None if not isinstance(self.model, str) else cast(Literal["openai", "anthropic", "gemini"], self.provider)
+        )
         try:
             result = self.client.system_one(request.state, request.questions, provider=provider, model=self.model)
         except ValueError as error:  # missing provider extra or bad provider name
@@ -93,8 +99,11 @@ def summarize(request: answers.Request, results: list[dict[str, Any]]) -> dict[s
     """Per question: each target's headline value, then agreement (choice) or spread (noul and score)."""
     summary: dict[str, Any] = {}
     for qid, question in request.questions.items():
-        values = {r["target"]: headline(r["response"]["answers"][qid])
-                  for r in results if r["ok"] and qid in r["response"].get("answers", {})}
+        values = {
+            r["target"]: headline(r["response"]["answers"][qid])
+            for r in results
+            if r["ok"] and qid in r["response"].get("answers", {})
+        }
         row: dict[str, Any] = {"type": question.type, "values": values}
         if values and question.type == "choice":
             row["agree"] = len(set(values.values())) == 1

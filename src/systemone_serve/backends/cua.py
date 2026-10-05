@@ -51,7 +51,9 @@ class Cua:
         # FourBModel wants a local PEFT adapter root holding text/ and multimodal/ subdirectories, not a Hub id.
         assert self.spec.hf_repo is not None
         adapter_root = snapshot(self.spec.hf_repo, self.spec.hf_revision, allow_patterns=[f"{MODALITY}/*"])
-        model = FourBModel(base_model=BASE_MODEL, lora_adapter_path=adapter_root, device=device, dtype=dtype, modality=MODALITY)
+        model = FourBModel(
+            base_model=BASE_MODEL, lora_adapter_path=adapter_root, device=device, dtype=dtype, modality=MODALITY
+        )
         try:
             model.load()
         except Exception as error:  # transformers, peft, and torch raise many types for a model that cannot load
@@ -72,12 +74,20 @@ class Cua:
         for key, question in request.questions.items():
             choices = options(question)
             if len(choices) > MAX_OPTIONS:
-                raise InvalidRequest(f'{self.spec.id}: question "{key}" has {len(choices)} options; at most {MAX_OPTIONS}.')
-            candidates = [option_type(element_id=o.key, role="option", label=o.description, action="choose") for o in choices]
+                raise InvalidRequest(
+                    f'{self.spec.id}: question "{key}" has {len(choices)} options; at most {MAX_OPTIONS}.'
+                )
+            candidates = [
+                option_type(element_id=o.key, role="option", label=o.description, action="choose") for o in choices
+            ]
             try:
                 with self._lock:
-                    scored = model.forward(candidates, app="System One", task_family="decision",
-                                           ax_tree=screen_text(request.state, question.instructions))
+                    scored = model.forward(
+                        candidates,
+                        app="System One",
+                        task_family="decision",
+                        ax_tree=screen_text(request.state, question.instructions),
+                    )
             except Exception as error:
                 raise BackendFailed(f"{self.spec.id}: inference failed: {describe(error)}") from error
             answers[key] = answer(question, {item.element_id: item.probability for item in scored})

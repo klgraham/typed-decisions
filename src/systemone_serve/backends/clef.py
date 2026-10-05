@@ -25,6 +25,7 @@ class Clef:
         self._loaded: tuple[ModuleType, Any, Any] | None = None
 
     def load(self) -> tuple[ModuleType, Any, Any]:
+        assert self.spec.hf_repo is not None
         with self._lock:
             if self._loaded is None:
                 torch = import_torch("clef")
@@ -32,7 +33,9 @@ class Clef:
                 # joint_schema_model.py is executed in this process, so it comes from the pinned commit only.
                 path = Path(snapshot(self.spec.hf_repo, self.spec.hf_revision))
                 try:
-                    module = _import_file(f"clef_joint_schema_{self.spec.id.replace('-', '_')}", path / "joint_schema_model.py")
+                    module = _import_file(
+                        f"clef_joint_schema_{self.spec.id.replace('-', '_')}", path / "joint_schema_model.py"
+                    )
                     model, processor = module.load_release_model(path, device=device)
                 except ServeError:
                     raise

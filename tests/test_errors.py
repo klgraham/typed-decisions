@@ -1,7 +1,9 @@
 """Failures that are not ServeErrors still come out as the contract's error body and a documented exit code."""
 
 import json
+import types
 import urllib.error
+from email.message import Message
 
 import httpx2
 import pytest
@@ -32,7 +34,9 @@ def test_router_maps_unexpected_backend_errors_to_backend_failed():
 
 
 def test_server_always_answers_with_the_error_body():
-    http = TestClient(create_app(Router(specs=[], backends={"boom": Boom()}), api_key=""), raise_server_exceptions=False)
+    http = TestClient(
+        create_app(Router(specs=[], backends={"boom": Boom()}), api_key=""), raise_server_exceptions=False
+    )
     reply = http.post("/v1/systemone", json={**CHOICE, "model": "boom"})
     assert (reply.status_code, reply.headers["content-type"]) == (502, "application/json")
     assert reply.json()["error"]["code"] == "backend_failed"
@@ -65,18 +69,22 @@ def tev1(post):
 def raises(error):
     def post(*args):
         raise error
+
     return post
 
 
-@pytest.mark.parametrize("post, error", [
-    (lambda *a: {"error": "x"}, BackendFailed),
-    (lambda *a: {"choices": [{"message": {"content": "A"}}], "usage": {"prompt_tokens": "n/a"}}, BackendFailed),
-    (lambda *a: {"choices": [{"message": {"content": "?"}}]}, BackendFailed),
-    (raises(ConnectionResetError("peer reset")), BackendUnavailable),
-    (raises(json.JSONDecodeError("bad", "", 0)), BackendFailed),
-    (raises(urllib.error.HTTPError("u", 401, "no", {}, None)), BackendUnavailable),
-    (raises(urllib.error.HTTPError("u", 500, "no", {}, None)), BackendFailed),
-])
+@pytest.mark.parametrize(
+    "post, error",
+    [
+        (lambda *a: {"error": "x"}, BackendFailed),
+        (lambda *a: {"choices": [{"message": {"content": "A"}}], "usage": {"prompt_tokens": "n/a"}}, BackendFailed),
+        (lambda *a: {"choices": [{"message": {"content": "?"}}]}, BackendFailed),
+        (raises(ConnectionResetError("peer reset")), BackendUnavailable),
+        (raises(json.JSONDecodeError("bad", "", 0)), BackendFailed),
+        (raises(urllib.error.HTTPError("u", 401, "no", Message(), None)), BackendUnavailable),
+        (raises(urllib.error.HTTPError("u", 500, "no", Message(), None)), BackendFailed),
+    ],
+)
 def test_tev1_together_maps_every_failure(monkeypatch, post, error):
     monkeypatch.setenv("TOGETHER_API_KEY", "dummy-together")
     with pytest.raises(error):
@@ -84,7 +92,9 @@ def test_tev1_together_maps_every_failure(monkeypatch, post, error):
 
 
 def jev(status, payload):
-    return SystemOneHTTP.for_spec(BY_ID["jev-latest"], transport=httpx2.MockTransport(lambda r: httpx2.Response(status, json=payload)))
+    return SystemOneHTTP.for_spec(
+        BY_ID["jev-latest"], transport=httpx2.MockTransport(lambda r: httpx2.Response(status, json=payload))
+    )
 
 
 def test_rejected_jev_key_is_unavailable_and_never_echoed(monkeypatch):
@@ -99,8 +109,9 @@ def test_rejected_jev_key_is_unavailable_and_never_echoed(monkeypatch):
 
 def test_cli_and_server_errors_never_print_a_key(capsys, monkeypatch, body_file):
     monkeypatch.setenv("TOGETHER_API_KEY", "dummy-together-key")
-    monkeypatch.setattr(Tev1Together, "evaluate", lambda self, request: (_ for _ in ()).throw(
-        RuntimeError("echo dummy-together-key")))
+    monkeypatch.setattr(
+        Tev1Together, "evaluate", lambda self, request: (_ for _ in ()).throw(RuntimeError("echo dummy-together-key"))
+    )
     assert cli.main(["ask", str(body_file), "--model", "tev1-4b-experimental@together"]) == 4
     assert "dummy-together-key" not in capsys.readouterr().out
     http = TestClient(create_app(Router(), api_key=""))
@@ -114,14 +125,16 @@ def test_state_must_be_string_object_or_array():
         parse({**CHOICE, "state": 42, "model": "uniform-baseline"})
 
 
-def test_clef_release_errors_are_backend_failures():
-    class Release:
-        @staticmethod
-        def systemone(model, processor, body):
-            raise ValueError("CUDA out of memory")
+def test_clef_release_errors_are_backend_failures(monkeypatch):
+    release = types.ModuleType("clef_release")
+
+    def systemone(model, processor, body):
+        raise ValueError("CUDA out of memory")
+
+    monkeypatch.setattr(release, "systemone", systemone, raising=False)
 
     clef = Clef(BY_ID["clef-flash"])
-    clef._loaded = (Release, object(), object())
+    clef._loaded = (release, object(), object())
     with pytest.raises(BackendFailed, match="ValueError: CUDA out of memory"):
         clef.evaluate(parse({**CHOICE, "model": "clef-flash"}))
 
@@ -137,9 +150,14 @@ def test_models_survives_a_package_that_crashes_on_import(capsys, monkeypatch):
     assert all(m["extra_installed"] is False for m in json.loads(capsys.readouterr().out)["models"] if m["extra"])
 
 
-SECRETS = {"TYPESAFE_API_KEY": "dummy-ts-key-123", "SYSTEMONE_SERVE_API_KEY": "dummy-serve-key-456",
-           "TOGETHER_API_KEY": "dummy-together-key-789"}
-LEAKY = "upstream said: keys dummy-ts-key-123 dummy-serve-key-456 dummy-together-key-789, Authorization: Bearer tok-abc.DEF"
+SECRETS = {
+    "TYPESAFE_API_KEY": "dummy-ts-key-123",
+    "SYSTEMONE_SERVE_API_KEY": "dummy-serve-key-456",
+    "TOGETHER_API_KEY": "dummy-together-key-789",
+}
+LEAKY = (
+    "upstream said: keys dummy-ts-key-123 dummy-serve-key-456 dummy-together-key-789, Authorization: Bearer tok-abc.DEF"
+)
 
 
 def assert_scrubbed(text: str) -> None:

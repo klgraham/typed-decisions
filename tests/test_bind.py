@@ -49,5 +49,8 @@ def test_a_port_that_refuses_listen_is_exit_2_before_uvicorn(capsys, monkeypatch
     captured = capsys.readouterr()
     out = json.loads(captured.out)  # one JSON object: the error, with no listening event before it
     assert code == 2 and out["error"]["code"] == "invalid_request"
-    assert out["error"]["message"].startswith("Cannot listen on 127.0.0.1:") and "Address already in use" in out["error"]["message"]
+    assert (
+        out["error"]["message"].startswith("Cannot listen on 127.0.0.1:")
+        and "Address already in use" in out["error"]["message"]
+    )
     assert no_uvicorn == [] and "Traceback" not in captured.err

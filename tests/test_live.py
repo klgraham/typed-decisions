@@ -15,9 +15,13 @@ from systemone_serve.catalog import CATALOG
 from systemone_serve.router import Router
 
 pytestmark = pytest.mark.live
-QUESTION = {"state": "I was charged twice for order 1182. Please refund one of the charges.",
-            "questions": {"refund": {"type": "noul", "instructions": "Does the customer ask for a refund?"},
-                          "team": {"type": "choice", "criteria": {"billing": "Charges and refunds", "shipping": "Deliveries"}}}}
+QUESTION = {
+    "state": "I was charged twice for order 1182. Please refund one of the charges.",
+    "questions": {
+        "refund": {"type": "noul", "instructions": "Does the customer ask for a refund?"},
+        "team": {"type": "choice", "criteria": {"billing": "Charges and refunds", "shipping": "Deliveries"}},
+    },
+}
 
 
 def check(response: dict) -> None:
@@ -51,8 +55,10 @@ def test_tev1_together():
     check(Router().evaluate({**QUESTION, "model": "tev1-4b-experimental@together"}))
 
 
-@pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY", "").strip() or importlib.util.find_spec("openai") is None,
-                    reason="OPENAI_API_KEY or the llm-openai extra missing")
+@pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY", "").strip() or importlib.util.find_spec("openai") is None,
+    reason="OPENAI_API_KEY or the llm-openai extra missing",
+)
 def test_llm_through_adapter():
     from systemone_serve.compare import run
 

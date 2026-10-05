@@ -76,14 +76,31 @@ def fake_ollama(tmp_path):
 def serve(fake_ollama, never_ready: bool = False) -> tuple[subprocess.Popen, int]:
     bin_dir, pid_file = fake_ollama
     router_port, upstream_port = free_port(), free_port()
-    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_PIDS": str(pid_file),
-           "SYSTEMONE_TEV1_4B_EXPERIMENTAL_URL": f"http://127.0.0.1:{upstream_port}"}
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_PIDS": str(pid_file),
+        "SYSTEMONE_TEV1_4B_EXPERIMENTAL_URL": f"http://127.0.0.1:{upstream_port}",
+    }
     env.pop("TYPESAFE_API_KEY", None)
     if never_ready:
         env["FAKE_NEVER_READY"] = "1"
-    process = subprocess.Popen([sys.executable, "-m", "systemone_serve.cli", "serve", "--port", str(router_port),
-                                "--model", "tev1-4b-experimental", "--launch"], env=env,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "systemone_serve.cli",
+            "serve",
+            "--port",
+            str(router_port),
+            "--model",
+            "tev1-4b-experimental",
+            "--launch",
+        ],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     wait_for(lambda: pid_file.exists() and pid_file.read_text().strip())
     return process, router_port
 
@@ -113,8 +130,15 @@ def test_signal_while_serving_stops_the_whole_upstream_group(fake_ollama, signum
 
 @linux_only
 @pytest.mark.parametrize("never_ready", [False, True])
-@pytest.mark.parametrize("first, gap, codes", [(signal.SIGTERM, 0.0, {143}), (signal.SIGTERM, 0.005, {143}),
-                                               (signal.SIGHUP, 0.0, {129, 143}), (signal.SIGHUP, 0.005, {129})])
+@pytest.mark.parametrize(
+    "first, gap, codes",
+    [
+        (signal.SIGTERM, 0.0, {143}),
+        (signal.SIGTERM, 0.005, {143}),
+        (signal.SIGHUP, 0.0, {129, 143}),
+        (signal.SIGHUP, 0.005, {129}),
+    ],
+)
 def test_a_second_signal_keeps_the_exit_code_and_cleanup(fake_ollama, never_ready, first, gap, codes):
     # SIGHUP while serving is the case uvicorn swallowed, which lost the signal and let SIGTERM kill us raw. Two
     # signals sent back to back may be handled in either order, so a gap of 0 accepts either signal's code.
@@ -153,13 +177,21 @@ class Stale(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"stale")
 
-    def log_message(self, *args):
+    def log_message(self, format: str, *args: object) -> None:
         pass
 
 
 def spec_on(port: int, command: tuple[str, ...]) -> ModelSpec:
-    return ModelSpec(id="x", kind="systemone-http", title="x", license="x", stack="x", hardware="x",
-                     url=f"http://127.0.0.1:{port}", launch=(Step(command=command, ready_path="/health"),))
+    return ModelSpec(
+        id="x",
+        kind="systemone-http",
+        title="x",
+        license="x",
+        stack="x",
+        hardware="x",
+        url=f"http://127.0.0.1:{port}",
+        launch=(Step(command=command, ready_path="/health"),),
+    )
 
 
 def test_port_already_in_use_fails_instead_of_trusting_the_stale_server():
@@ -168,7 +200,10 @@ def test_port_already_in_use_fails_instead_of_trusting_the_stale_server():
     try:
         port = stale.server_address[1]
         child = ("{python}", "-c", "import time; time.sleep(60)")
-        with pytest.raises(BackendUnavailable, match=f"port {port} is already in use"), launched([spec_on(port, child)], timeout=10):
+        with (
+            pytest.raises(BackendUnavailable, match=f"port {port} is already in use"),
+            launched([spec_on(port, child)], timeout=10),
+        ):
             pass
     finally:
         stale.shutdown()
@@ -177,7 +212,10 @@ def test_port_already_in_use_fails_instead_of_trusting_the_stale_server():
 def test_child_that_dies_right_after_answering_is_not_ready(tmp_path):
     port = free_port()
     flag = tmp_path / "answered"
-    child = ("{python}", "-c", textwrap.dedent(f"""
+    child = (
+        "{python}",
+        "-c",
+        textwrap.dedent(f"""
         import http.server, threading, os, time
         class H(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
@@ -187,14 +225,21 @@ def test_child_that_dies_right_after_answering_is_not_ready(tmp_path):
         threading.Thread(target=s.serve_forever, daemon=True).start()
         while not os.path.exists({str(flag)!r}): time.sleep(0.01)
         os._exit(3)
-    """))
+    """),
+    )
     with pytest.raises(BackendUnavailable, match="exited with code 3"), launched([spec_on(port, child)], timeout=20):
         pass
 
 
 def test_children_get_only_their_own_key(monkeypatch):
-    for name, value in [("TYPESAFE_API_KEY", "ts"), ("TOGETHER_API_KEY", "tg"), ("OPENAI_API_KEY", "oa"),
-                        ("SYSTEMONE_SERVE_API_KEY", "sv"), ("KEV_API_KEY", "kev"), ("HF_TOKEN", "hf")]:
+    for name, value in [
+        ("TYPESAFE_API_KEY", "ts"),
+        ("TOGETHER_API_KEY", "tg"),
+        ("OPENAI_API_KEY", "oa"),
+        ("SYSTEMONE_SERVE_API_KEY", "sv"),
+        ("KEV_API_KEY", "kev"),
+        ("HF_TOKEN", "hf"),
+    ]:
         monkeypatch.setenv(name, value)
     env = child_env(BY_ID["kev-4b"], {"PORT": "1"})
     assert {"TYPESAFE_API_KEY", "TOGETHER_API_KEY", "OPENAI_API_KEY", "SYSTEMONE_SERVE_API_KEY"}.isdisjoint(env)
@@ -223,8 +268,13 @@ def no_uvicorn(monkeypatch):
     calls = []
 
     def run(server, sockets=None):
-        calls.append({"host": server.config.host, "port": server.config.port,
-                      "bound": [sock.getsockname()[1] for sock in sockets or []]})
+        calls.append(
+            {
+                "host": server.config.host,
+                "port": server.config.port,
+                "bound": [sock.getsockname()[1] for sock in sockets or []],
+            }
+        )
         server.started = True
 
     monkeypatch.setattr(uvicorn.Server, "run", run)
@@ -286,7 +336,7 @@ def test_ipv6_router_port_in_use_exits_2(capsys, no_uvicorn):
 
 def localhost_addresses() -> list[tuple[int, str]]:
     infos = socket.getaddrinfo("localhost", 0, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
-    return list(dict.fromkeys((family, address[0]) for family, _, _, _, address in infos))
+    return list(dict.fromkeys((family, str(address[0])) for family, _, _, _, address in infos))
 
 
 @pytest.mark.parametrize("family, address", localhost_addresses())
@@ -319,6 +369,7 @@ def test_the_router_port_is_held_from_the_check_until_uvicorn_serves_it(capsys, 
             except OSError as error:
                 squatter.append(error.errno)
         server.started = True
+        assert sockets is not None
         assert [sock.getsockname() for sock in sockets] == [("127.0.0.1", port)]
 
     monkeypatch.setattr(uvicorn.Server, "run", run)
@@ -382,11 +433,14 @@ def test_upstream_cannot_shadow_a_catalog_model_or_point_at_this_server(capsys, 
     assert code == 2 and "points at this server itself" in out["error"]["message"]
 
 
-@pytest.mark.parametrize("host, url", [
-    ("127.0.0.1", "http://127.0.0.1:{port}"),
-    ("127.0.0.1", "http://localhost:{port}/"),
-    ("localhost", "http://127.0.0.1:{port}"),
-])
+@pytest.mark.parametrize(
+    "host, url",
+    [
+        ("127.0.0.1", "http://127.0.0.1:{port}"),
+        ("127.0.0.1", "http://localhost:{port}/"),
+        ("localhost", "http://127.0.0.1:{port}"),
+    ],
+)
 def test_an_env_upstream_url_that_is_this_server_is_refused(capsys, monkeypatch, no_uvicorn, host, url):
     port = free_port()
     monkeypatch.setenv("SYSTEMONE_KEV_4B_URL", url.format(port=port))
@@ -395,12 +449,16 @@ def test_an_env_upstream_url_that_is_this_server_is_refused(capsys, monkeypatch,
     found = events(capsys.readouterr().out)
     assert code == 2 and len(found) == 1  # refused before the listening event
     message = found[0]["error"]["message"]
-    assert "kev-4b" in message and "(from SYSTEMONE_KEV_4B_URL)" in message and "points at this server itself" in message
+    assert (
+        "kev-4b" in message and "(from SYSTEMONE_KEV_4B_URL)" in message and "points at this server itself" in message
+    )
     assert no_uvicorn == []
 
 
 def test_a_catalog_default_url_that_is_this_server_is_refused(capsys, no_uvicorn):
-    port = int(BY_ID["openjev"].url.rsplit(":", 1)[1])
+    url = BY_ID["openjev"].url
+    assert url is not None
+    port = int(url.rsplit(":", 1)[1])
     try:
         socket.create_server(("127.0.0.1", port)).close()
     except OSError:
@@ -435,13 +493,18 @@ def test_sigterm_is_bounded_while_a_request_waits_on_a_hung_upstream():
     port = free_port()
     env = {**os.environ, "SYSTEMONE_KEV_4B_URL": f"http://127.0.0.1:{hung.getsockname()[1]}"}
     env.pop("TYPESAFE_API_KEY", None)
-    process = subprocess.Popen([sys.executable, "-m", "systemone_serve.cli", "serve", "--port", str(port),
-                                "--model", "kev-4b"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    process = subprocess.Popen(
+        [sys.executable, "-m", "systemone_serve.cli", "serve", "--port", str(port), "--model", "kev-4b"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
     body = json.dumps({"model": "kev-4b", "state": "s", "questions": {"q": {"type": "noul"}}}).encode()
 
     def ask() -> None:
-        request = urllib.request.Request(f"http://127.0.0.1:{port}/v1/systemone", data=body,
-                                         headers={"content-type": "application/json"})
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/systemone", data=body, headers={"content-type": "application/json"}
+        )
         try:
             urllib.request.urlopen(request, timeout=60).close()
         except OSError:
@@ -501,10 +564,15 @@ sys.exit(cli.main(["serve", "--port", sys.argv[1], "--model", "uniform-baseline"
 def test_a_signal_swallowed_inside_a_request_still_stops_serve():
     port = free_port()
     env = {key: value for key, value in os.environ.items() if key != "TYPESAFE_API_KEY"}
-    process = subprocess.Popen([sys.executable, "-c", SWALLOWS_SIGNALS, str(port)], env=env,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    busy = threading.Thread(target=lambda: urllib.request.urlopen(f"http://127.0.0.1:{port}/busy", timeout=30).read(),
-                            daemon=True)
+    process = subprocess.Popen(
+        [sys.executable, "-c", SWALLOWS_SIGNALS, str(port)],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    busy = threading.Thread(
+        target=lambda: urllib.request.urlopen(f"http://127.0.0.1:{port}/busy", timeout=30).read(), daemon=True
+    )
     try:
         wait_for(lambda: router_up(port))
         busy.start()
@@ -574,11 +642,22 @@ sys.exit(cli.main(args))
 def test_stop_signal_after_dequeuing_a_task_wakeup_exits_and_cleans_up(tmp_path, with_launch, signum):
     port, upstream_port = free_port(), free_port()
     pid_file = tmp_path / "upstream.pid"
-    env = {key: value for key, value in os.environ.items()
-           if key in {"PATH", "HOME", "LANG", "TMPDIR", "PYTHONPATH"}}
-    process = subprocess.Popen([sys.executable, "-c", SIGNAL_DURING_DISPATCH, str(port), str(upstream_port),
-                                str(pid_file), "yes" if with_launch else "no", str(int(signum))],
-                               env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    env = {key: value for key, value in os.environ.items() if key in {"PATH", "HOME", "LANG", "TMPDIR", "PYTHONPATH"}}
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            SIGNAL_DURING_DISPATCH,
+            str(port),
+            str(upstream_port),
+            str(pid_file),
+            "yes" if with_launch else "no",
+            str(int(signum)),
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     try:
         stdout, stderr = process.communicate(timeout=15)
         assert b"SIGNAL_AFTER_DEQUEUE" in stdout, stderr.decode()
