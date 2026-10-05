@@ -107,6 +107,29 @@ def test_tev1_together_end_to_end_with_fake_api(monkeypatch, body):
     assert sent[0][2] == "tg-test"
 
 
+@pytest.mark.parametrize("env, model", [
+    ({}, "together/Tev1-4B-experimental"),
+    ({"TOGETHER_MODEL": "together/older-name"}, "together/older-name"),
+    ({"TOGETHER_MODEL": "together/older-name", "SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL": "together/newer"},
+     "together/newer"),
+])
+def test_tev1_together_model_env_is_what_is_sent(monkeypatch, body, env, model):
+    monkeypatch.setenv("TOGETHER_API_KEY", "tg-test")
+    for name in ("TOGETHER_MODEL", "SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    sent = []
+
+    def post(url, request_body, key):
+        sent.append(request_body["model"])
+        return {"choices": [{"message": {"content": "A"}, "logprobs": {"top_logprobs": [{"A": -0.1, "B": -2.4}]}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 1}}
+
+    Tev1Together(BY_ID["tev1-4b-experimental@together"], post=post).evaluate(parse(body))
+    assert set(sent) == {model}
+
+
 def test_tev1_together_needs_key(body):
     with pytest.raises(BackendUnavailable, match="TOGETHER_API_KEY"):
         Tev1Together(BY_ID["tev1-4b-experimental@together"], post=lambda *a: {}).evaluate(parse(body))

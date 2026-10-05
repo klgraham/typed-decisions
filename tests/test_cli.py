@@ -22,8 +22,17 @@ def test_models_lists_every_model_with_extra_and_readiness(capsys):
     assert by_id["kev-4b"]["extra"] == "kev"
     assert by_id["kev-4b"]["extra_installed"] is False
     assert by_id["kev-4b"]["url_env"] == "SYSTEMONE_KEV_4B_URL"
+    assert (by_id["kev-4b"]["model_env"], by_id["kev-4b"]["upstream_model"]) == ("SYSTEMONE_KEV_4B_MODEL", "kev-latest")
     assert by_id["jev-latest"]["auth_env"] == "TYPESAFE_API_KEY"
     assert by_id["jev-latest"]["auth_env_set"] is False
+
+
+def test_models_shows_a_model_override(capsys, monkeypatch):
+    monkeypatch.setenv("SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL", "tev1:4b-q4_K_M")
+    by_id = {m["id"]: m for m in run(capsys, "models")[1]["models"]}
+    assert by_id["tev1-4b-experimental"]["upstream_model"] == "tev1:4b-q4_K_M"
+    assert by_id["tev1-4b-experimental@together"]["model_env"] == "SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL"
+    assert "model_env" not in by_id["jev-latest"] and "model_env" not in by_id["uniform-baseline"]
 
 
 def test_models_never_prints_a_key_value(capsys, monkeypatch):

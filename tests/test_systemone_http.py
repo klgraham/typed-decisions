@@ -96,3 +96,26 @@ def test_upstream_errors_map_to_router_errors(status, payload, error):
     transport, _ = recorder(status, payload)
     with pytest.raises(error):
         SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport).evaluate(parse(REQUEST))
+
+
+@pytest.mark.parametrize("model, env, default", [
+    ("tev1-4b-experimental", "SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL", "tev1"),
+    ("kev-4b", "SYSTEMONE_KEV_4B_MODEL", "kev-latest"),
+    ("pplx-decider-v1-27b", "SYSTEMONE_PPLX_DECIDER_V1_27B_MODEL", "jev-latest"),
+    ("openjev", "SYSTEMONE_OPENJEV_MODEL", "openjev"),
+])
+def test_model_env_overrides_the_name_sent_upstream(monkeypatch, model, env, default):
+    assert BY_ID[model].model_env == env
+    transport, calls = recorder()
+    SystemOneHTTP.for_spec(BY_ID[model], transport=transport).evaluate(parse(REQUEST))
+    monkeypatch.setenv(env, "tev1:4b-q4_K_M")
+    SystemOneHTTP.for_spec(BY_ID[model], transport=transport).evaluate(parse(REQUEST))
+    assert [json.loads(call.content)["model"] for call in calls] == [default, "tev1:4b-q4_K_M"]
+
+
+def test_hosted_jev_ignores_a_model_env_like_it_ignores_a_url_env(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "dummy-test-key")  # a mock transport: nothing leaves the box
+    monkeypatch.setenv("SYSTEMONE_JEV_LATEST_MODEL", "something-else")
+    transport, calls = recorder()
+    SystemOneHTTP.for_spec(BY_ID["jev-latest"], transport=transport).evaluate(parse({**REQUEST, "model": "jev-latest"}))
+    assert json.loads(calls[0].content)["model"] == "jev-latest"

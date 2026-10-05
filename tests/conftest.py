@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import threading
 import time
@@ -44,8 +45,11 @@ def no_keys(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> 
     if request.node.get_closest_marker("live"):
         return
     for name in ("TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "TOGETHER_API_KEY", "SYSTEMONE_SERVE_API_KEY",
-                 "KEV_API_KEY", "AUTOJEV_API_KEY", "SHIM_TOKEN", "SYSTEMONE_DEVICE"):
+                 "KEV_API_KEY", "AUTOJEV_API_KEY", "SHIM_TOKEN", "SYSTEMONE_DEVICE", "TOGETHER_MODEL"):
         monkeypatch.delenv(name, raising=False)
+    for name in list(os.environ):  # SYSTEMONE_<ID>_URL and SYSTEMONE_<ID>_MODEL from the developer's shell
+        if name.startswith("SYSTEMONE_") and name.endswith(("_URL", "_MODEL")):
+            monkeypatch.delenv(name)
 
 
 def free_port() -> int:
