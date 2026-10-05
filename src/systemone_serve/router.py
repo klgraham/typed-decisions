@@ -1,7 +1,9 @@
 """Route a System One body to the backend named by its `model`."""
 
+import dataclasses
 import threading
-from collections.abc import Iterable
+import uuid
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from systemone_serve import answers
@@ -43,6 +45,7 @@ class Router:
         self.specs = {spec.id: spec for spec in specs}
         self._backends: dict[str, Backend] = dict(backends or {})
         self._lock = threading.Lock()
+        self.instance = uuid.uuid4().hex[:16]  # names this router in the hop header; not a secret
 
     def backend(self, model: str) -> Backend:
         with self._lock:
@@ -61,8 +64,10 @@ class Router:
     def ids(self) -> list[str]:
         return sorted(set(self.specs) | set(self._backends))
 
-    def evaluate(self, body: Any) -> dict[str, Any]:
-        request = answers.parse(body)
+    def evaluate(self, body: Any, via: Sequence[str] = ()) -> dict[str, Any]:
+        """`via` is the hop chain the request arrived with (see `server`). This router adds itself, and a proxy backend
+        sends the chain on, so an upstream that leads back here is refused instead of recursing."""
+        request = dataclasses.replace(answers.parse(body), via=(*via, self.instance))
         return checked(self.backend(request.model), request, request.model)
 
     def models(self) -> dict[str, Any]:

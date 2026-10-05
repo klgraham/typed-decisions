@@ -27,12 +27,14 @@ CONTRACT_FIELDS = ("state", "model", "questions")
 
 @dataclass(frozen=True)
 class Request:
-    """A parsed System One request. `extra` keeps fields some upstreams accept (`images`, `options`)."""
+    """A parsed System One request. `extra` keeps fields some upstreams accept (`images`, `options`). `via` lists the
+    routers it has already passed through (the hop header), so a proxy can pass the chain on."""
 
     model: str
     state: Any
     questions: dict[str, Noul | Choice | Score]
     extra: dict[str, Any]
+    via: tuple[str, ...] = ()
 
     def body(self, model: str | None = None) -> dict[str, Any]:
         return {
