@@ -21,8 +21,11 @@ BODY = {
             "instructions": "Which team should handle this?",
             "criteria": {"billing": "Payments, invoicing, refunds", "technical": "Bugs, outages", "sales": None},
         },
-        "frustration": {"type": "score", "instructions": "How frustrated is the customer?",
-                        "criteria": ["Calm", "Frustrated", "Very angry"]},
+        "frustration": {
+            "type": "score",
+            "instructions": "How frustrated is the customer?",
+            "criteria": ["Calm", "Frustrated", "Very angry"],
+        },
     },
 }
 
@@ -44,8 +47,17 @@ def no_keys(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> 
     """Unit tests never see real keys or URLs; live tests opt out with the `live` marker."""
     if request.node.get_closest_marker("live"):
         return
-    for name in ("TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "TOGETHER_API_KEY", "SYSTEMONE_SERVE_API_KEY",
-                 "KEV_API_KEY", "AUTOJEV_API_KEY", "SHIM_TOKEN", "SYSTEMONE_DEVICE", "TOGETHER_MODEL"):
+    for name in (
+        "TYPESAFE_API_KEY",
+        "TYPESAFE_BASE_URL",
+        "TOGETHER_API_KEY",
+        "SYSTEMONE_SERVE_API_KEY",
+        "KEV_API_KEY",
+        "AUTOJEV_API_KEY",
+        "SHIM_TOKEN",
+        "SYSTEMONE_DEVICE",
+        "TOGETHER_MODEL",
+    ):
         monkeypatch.delenv(name, raising=False)
     for name in list(os.environ):  # SYSTEMONE_<ID>_URL and SYSTEMONE_<ID>_MODEL from the developer's shell
         if name.startswith("SYSTEMONE_") and name.endswith(("_URL", "_MODEL")):
@@ -62,7 +74,9 @@ def free_port() -> int:
 def running_router():
     """A real router on a real port, serving the uniform baseline. Yields its base URL."""
     port = free_port()
-    server = uvicorn.Server(uvicorn.Config(create_app(Router(), api_key=""), host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(
+        uvicorn.Config(create_app(Router(), api_key=""), host="127.0.0.1", port=port, log_level="warning")
+    )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10

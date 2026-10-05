@@ -56,10 +56,15 @@ def check_hops(entries: Iterable[str]) -> None:
     for position, entry in enumerate(entries, 1):
         if HOP_ENTRY.fullmatch(entry):
             continue
-        problem = (f"is {len(entry)} characters long (at most {HOP_ENTRY_MAX})" if len(entry) > HOP_ENTRY_MAX
-                   else "has a character other than ASCII letters, digits, '_' and '-'")
-        raise InvalidRequest(f"{HOP_HEADER} entry {position} {problem}. The header lists router ids separated by "
-                             "commas; send it as the router set it, or not at all.")
+        problem = (
+            f"is {len(entry)} characters long (at most {HOP_ENTRY_MAX})"
+            if len(entry) > HOP_ENTRY_MAX
+            else "has a character other than ASCII letters, digits, '_' and '-'"
+        )
+        raise InvalidRequest(
+            f"{HOP_HEADER} entry {position} {problem}. The header lists router ids separated by "
+            "commas; send it as the router set it, or not at all."
+        )
 
 
 class SystemOneHTTP:
@@ -91,18 +96,36 @@ class SystemOneHTTP:
         self.hop = hop
 
     @classmethod
-    def for_spec(cls, spec: ModelSpec, transport: httpx2.BaseTransport | None = None, relabel: bool = True) -> "SystemOneHTTP":
+    def for_spec(
+        cls, spec: ModelSpec, transport: httpx2.BaseTransport | None = None, relabel: bool = True
+    ) -> "SystemOneHTTP":
         """`relabel` reports local upstreams under the router id (`kev-4b`), keeping theirs in `upstream_model`."""
         if spec.kind == "hosted-jev":
             # The base URL is fixed: TYPESAFE_BASE_URL may point at this router, and Jev must not loop back to it.
-            return cls(spec.id, TYPESAFE_URL, spec.upstream_model, key_env=JEV_KEY_ENV, key_required=True,
-                       timeout=60.0, transport=transport)
+            return cls(
+                spec.id,
+                TYPESAFE_URL,
+                spec.upstream_model,
+                key_env=JEV_KEY_ENV,
+                key_required=True,
+                timeout=60.0,
+                transport=transport,
+            )
         url = spec.resolved_url()
         if not url:
             raise BackendUnavailable(f"{spec.id}: no upstream URL. Set {spec.url_env}.")
         hint = f"Start it with `sys1 serve --model {spec.id} --launch`, or set {spec.url_env}."
-        return cls(spec.id, url, spec.resolved_model(), key_env=spec.auth_env, hint=hint,
-                   retry=RetryPolicy(max_retries=0), transport=transport, label=spec.id if relabel else None, hop=True)
+        return cls(
+            spec.id,
+            url,
+            spec.resolved_model(),
+            key_env=spec.auth_env,
+            hint=hint,
+            retry=RetryPolicy(max_retries=0),
+            transport=transport,
+            label=spec.id if relabel else None,
+            hop=True,
+        )
 
     def _api_key(self) -> str:
         key = os.environ.get(self.key_env, "").strip() if self.key_env else ""
@@ -123,13 +146,26 @@ class SystemOneHTTP:
             check_hops(request.via)  # a library caller's chain, too: only tokens are ever forwarded
             headers = {HOP_HEADER: ",".join(request.via)}
         try:
-            with TypeSafeClient(api_key=api_key, base_url=self.base_url, model=model, retry=self.retry,
-                                timeout=self.timeout, transport=self.transport) as client:
-                result = client.system_one(request.state, request.questions, model=model,
-                                           extra_body=request.extra or None, extra_headers=headers)
+            with TypeSafeClient(
+                api_key=api_key,
+                base_url=self.base_url,
+                model=model,
+                retry=self.retry,
+                timeout=self.timeout,
+                transport=self.transport,
+            ) as client:
+                result = client.system_one(
+                    request.state,
+                    request.questions,
+                    model=model,
+                    extra_body=request.extra or None,
+                    extra_headers=headers,
+                )
                 body = self._json(result.raw_http_response)
         except TypeSafeAPIConnectionError as error:
-            raise BackendUnavailable(f"{self.name}: cannot reach {self.base_url} ({error}). {self.hint}".strip()) from error
+            raise BackendUnavailable(
+                f"{self.name}: cannot reach {self.base_url} ({error}). {self.hint}".strip()
+            ) from error
         except (TypeSafeUnprocessableEntityError, TypeSafeBadRequestError) as error:
             raise InvalidRequest(f"{self.name}: upstream rejected the request: {error}") from error
         except TypeSafeAPIResponseValidationError as error:

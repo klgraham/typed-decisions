@@ -38,9 +38,17 @@ def upstream_spec(name: str, target: str) -> ModelSpec:
     still come from SYSTEMONE_<NAME>_MODEL.
     """
     url, _, model = target.partition("#")
-    return ModelSpec(id=name, kind="systemone-http", title=f"{name} at {url}", license="see upstream",
-                     stack="any System One server", hardware="upstream", url=url.rstrip("/"), upstream_model=model or None,
-                     explicit=("url", "upstream_model") if model else ("url",))
+    return ModelSpec(
+        id=name,
+        kind="systemone-http",
+        title=f"{name} at {url}",
+        license="see upstream",
+        stack="any System One server",
+        hardware="upstream",
+        url=url.rstrip("/"),
+        upstream_model=model or None,
+        explicit=("url", "upstream_model") if model else ("url",),
+    )
 
 
 class Router:
@@ -75,7 +83,13 @@ class Router:
 
     def models(self) -> dict[str, Any]:
         """GET /v1/models in TypeSafe's shape. Release dates are not tracked here, so they are empty strings."""
-        return {"models": [
-            {"name": model, "description": self.specs[model].title if model in self.specs else model, "release_date": ""}
-            for model in self.ids()
-        ]}
+        return {
+            "models": [
+                {
+                    "name": model,
+                    "description": self.specs[model].title if model in self.specs else model,
+                    "release_date": "",
+                }
+                for model in self.ids()
+            ]
+        }

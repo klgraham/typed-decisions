@@ -29,7 +29,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from ipaddress import ip_address
 from typing import Any
@@ -73,8 +73,10 @@ def launch_address(spec: ModelSpec) -> tuple[str, int]:
         raise BackendUnavailable(f"{spec.id}: its URL has no port to launch on.")
     host = parsed.hostname or ""
     if not is_loopback(host):
-        raise BackendUnavailable(f"{spec.id}: {spec.url_env} points at {host}, and --launch only starts "
-                                 f"local upstreams. Drop --launch, or unset {spec.url_env}.")
+        raise BackendUnavailable(
+            f"{spec.id}: {spec.url_env} points at {host}, and --launch only starts "
+            f"local upstreams. Drop --launch, or unset {spec.url_env}."
+        )
     return (LOCAL_HOST if host == "localhost" else host), parsed.port
 
 
@@ -107,10 +109,13 @@ def check_launchable(spec: ModelSpec, host: str, port: int) -> None:
         program = step_name(step, spec.id)
         fix = f"Set {spec.url_env} to http://{LOCAL_HOST}:{port}, or start the upstream yourself and drop --launch."
         if not _takes_host(step):
-            raise BackendUnavailable(f"{spec.id}: {program} cannot be told to listen on {host}, only on {LOCAL_HOST}. {fix}")
+            raise BackendUnavailable(
+                f"{spec.id}: {program} cannot be told to listen on {host}, only on {LOCAL_HOST}. {fix}"
+            )
         if ":" in host and not step.ipv6:
-            raise BackendUnavailable(f"{spec.id}: {program} listens on IPv4 only, so it cannot serve "
-                                     f"http://{netloc(host, port)}. {fix}")
+            raise BackendUnavailable(
+                f"{spec.id}: {program} listens on IPv4 only, so it cannot serve http://{netloc(host, port)}. {fix}"
+            )
 
 
 def ensure_free(host: str, port: int, owner: str, hint: str = "") -> None:
@@ -123,9 +128,13 @@ def ensure_free(host: str, port: int, owner: str, hint: str = "") -> None:
             probe.bind((host, port))
     except OSError as error:
         if error.errno == errno.EADDRINUSE:
-            raise BackendUnavailable(f"{owner}: port {port} is already in use ({error.strerror}). {hint}".strip()) from error
-        raise BackendUnavailable(f"{owner}: cannot listen on {netloc(host, port)} ({error.strerror or error}). "
-                                 f"Use a {LOCAL_HOST} URL instead.") from error
+            raise BackendUnavailable(
+                f"{owner}: port {port} is already in use ({error.strerror}). {hint}".strip()
+            ) from error
+        raise BackendUnavailable(
+            f"{owner}: cannot listen on {netloc(host, port)} ({error.strerror or error}). "
+            f"Use a {LOCAL_HOST} URL instead."
+        ) from error
 
 
 def render_step(step: Step, values: dict[str, str]) -> tuple[list[str], dict[str, str]]:
@@ -166,8 +175,14 @@ def _die_with_parent() -> None:
 
 
 def start(command: list[str], env: dict[str, str]) -> subprocess.Popen[bytes]:
-    return subprocess.Popen(command, env=env, stdout=sys.stderr, stderr=sys.stderr, start_new_session=True,
-                            preexec_fn=_die_with_parent if _PRCTL is not None else None)  # noqa: PLW1509 - prctl only, preloaded
+    return subprocess.Popen(
+        command,
+        env=env,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+        start_new_session=True,
+        preexec_fn=_die_with_parent if _PRCTL is not None else None,
+    )  # noqa: PLW1509 - prctl only, preloaded
 
 
 def _signal_group(process: subprocess.Popen[bytes], signum: int) -> None:
@@ -209,8 +224,10 @@ def wait_ready(url: str, process: subprocess.Popen[bytes], timeout: float, auth_
                 if reply.status == 200:
                     time.sleep(READY_GRACE)
                     if process.poll() is not None:
-                        raise BackendUnavailable(f"Upstream exited with code {process.returncode} right after {url} "
-                                                 "answered; another process may own the port.")
+                        raise BackendUnavailable(
+                            f"Upstream exited with code {process.returncode} right after {url} "
+                            "answered; another process may own the port."
+                        )
                     return
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             pass
@@ -246,7 +263,7 @@ def _exit_signals_raise(restore: bool = True) -> Iterator[None]:
         else:
             raise Terminated(signum)
 
-    previous = {signum: signal.signal(signum, handler) for signum in EXIT_SIGNALS}
+    previous: dict[int, Any] = {signum: signal.signal(signum, handler) for signum in EXIT_SIGNALS}
     try:
         yield
     except BaseException as error:
@@ -280,7 +297,7 @@ def stopped_by_exit_signals(stop: Callable[[], None]) -> Iterator[None]:
         _STOP_HOOKS.remove(stop)
 
 
-def _leave(previous: dict[int, Any], restore: bool) -> None:
+def _leave(previous: Mapping[int, Any], restore: bool) -> None:
     if restore:
         _restore(previous)
     else:
@@ -292,7 +309,7 @@ def _ignore_exit_signals() -> None:
         signal.signal(signum, signal.SIG_IGN)
 
 
-def _restore(handlers: dict[int, Any]) -> None:
+def _restore(handlers: Mapping[int, Any]) -> None:
     for signum, handler in handlers.items():
         signal.signal(signum, handler)
 
@@ -327,21 +344,36 @@ def launched(specs: list[ModelSpec], timeout: float = 1800.0, restore_signals: b
                 check_launchable(spec, *launch_address(spec))
             for spec in specs:
                 host, port = launch_address(spec)
-                values = {"python": sys.executable, "port": str(port), "host": host, "hostport": netloc(host, port),
-                          "revision": spec.hf_revision or "main",
-                          "snapshot": snapshot(spec.hf_repo, spec.hf_revision) if spec.hf_repo and _needs_snapshot(spec) else ""}
+                values = {
+                    "python": sys.executable,
+                    "port": str(port),
+                    "host": host,
+                    "hostport": netloc(host, port),
+                    "revision": spec.hf_revision or "main",
+                    "snapshot": snapshot(spec.hf_repo, spec.hf_revision)
+                    if spec.hf_repo and _needs_snapshot(spec)
+                    else "",
+                }
                 for step in spec.launch:
                     step_port = step.port or port
                     step_host = host if step_port == port else LOCAL_HOST  # helper processes on fixed ports stay local
-                    ensure_free(step_host, step_port, spec.id, f"Stop that process, or run the upstream yourself and set "
-                                f"{spec.url_env}." if step_port == port else "Stop that process first.")
+                    ensure_free(
+                        step_host,
+                        step_port,
+                        spec.id,
+                        f"Stop that process, or run the upstream yourself and set {spec.url_env}."
+                        if step_port == port
+                        else "Stop that process first.",
+                    )
                     command, env = render_step(step, values)
                     try:
                         process = start(command, child_env(spec, env))
                     except FileNotFoundError as error:
                         raise BackendUnavailable(f"{spec.id}: {command[0]} is not installed or not on PATH.") from error
                     processes.append(process)
-                    wait_ready(f"http://{netloc(step_host, step_port)}{step.ready_path}", process, timeout, spec.auth_env)
+                    wait_ready(
+                        f"http://{netloc(step_host, step_port)}{step.ready_path}", process, timeout, spec.auth_env
+                    )
                 started.append(spec.id)
             yield started
         finally:

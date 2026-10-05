@@ -34,11 +34,14 @@ def fake_cua(monkeypatch, tmp_path):
             self.__dict__.update(kwargs)
 
     four_b = types.ModuleType("cua_s1.four_b")
-    four_b.FourBModel, four_b.Option = FourBModel, Option
+    monkeypatch.setattr(four_b, "FourBModel", FourBModel, raising=False)
+    monkeypatch.setattr(four_b, "Option", Option, raising=False)
     package = types.ModuleType("cua_s1")
-    package.four_b = four_b
-    torch = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: False),
-                                  backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: False)))
+    monkeypatch.setattr(package, "four_b", four_b, raising=False)
+    torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: False)),
+    )
     monkeypatch.setitem(sys.modules, "cua_s1", package)
     monkeypatch.setitem(sys.modules, "cua_s1.four_b", four_b)
     monkeypatch.setitem(sys.modules, "torch", torch)
@@ -59,9 +62,15 @@ def test_cua_loads_the_pinned_snapshot_directory(fake_cua, body):
     made, downloads, root = fake_cua
     result = cua.Cua(BY_ID["cua-s1-4b-0.2"]).evaluate(parse({**body, "model": "cua-s1-4b-0.2"}))
     assert downloads == [("cua-ai/cua-s1-4b-0.2", BY_ID["cua-s1-4b-0.2"].hf_revision, ["text/*"])]
-    assert len(BY_ID["cua-s1-4b-0.2"].hf_revision) == 40
+    revision = BY_ID["cua-s1-4b-0.2"].hf_revision
+    assert revision is not None and len(revision) == 40
     assert made["lora_adapter_path"] == str(root) != "cua-ai/cua-s1-4b-0.2"
-    assert (made["base_model"], made["modality"], made["device"], made["dtype"]) == ("Qwen/Qwen3.5-4B", "text", "cpu", "float32")
+    assert (made["base_model"], made["modality"], made["device"], made["dtype"]) == (
+        "Qwen/Qwen3.5-4B",
+        "text",
+        "cpu",
+        "float32",
+    )
     assert result["answers"]["is_urgent"] == {"type": "noul", "noul": 0.5}
 
 

@@ -76,6 +76,8 @@ dev = [
     "pytest>=8",
     "httpx>=0.28",
     "system-one-adapter==0.2.1",
+    "ruff>=0.16.10",
+    "ty>=0.0.84",
 ]
 
 [tool.uv]
@@ -93,6 +95,21 @@ conflicts = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["live: needs a key, weights, or a running upstream; skipped otherwise"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+include = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.analysis]
+# These model extras are optional and mutually exclusive; the core dev environment has neither.
+allowed-unresolved-imports = ["torch", "cua_s1.four_b"]
 
 [build-system]
 requires = ["hatchling"]

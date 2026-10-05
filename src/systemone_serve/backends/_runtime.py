@@ -40,4 +40,6 @@ def snapshot(repo: str, revision: str | None, allow_patterns: list[str] | None =
     try:
         return snapshot_download(repo, revision=revision, allow_patterns=allow_patterns)
     except Exception as error:  # huggingface_hub raises several unrelated types for network and auth failures
-        raise BackendUnavailable(f"Could not download {repo}@{revision or 'main'} from Hugging Face: {error}") from error
+        raise BackendUnavailable(
+            f"Could not download {repo}@{revision or 'main'} from Hugging Face: {error}"
+        ) from error

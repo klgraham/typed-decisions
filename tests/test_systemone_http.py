@@ -11,8 +11,12 @@ from systemone_serve.backends.systemone_http import SystemOneHTTP
 from systemone_serve.catalog import BY_ID
 from systemone_serve.errors import BackendFailed, BackendUnavailable, InvalidRequest
 
-ANSWER = {"model": "kev-latest", "answers": {"q": {"type": "noul", "noul": 0.9}},
-          "usage": {"input_tokens": 12, "output_tokens": 1}, "truncated": False}
+ANSWER = {
+    "model": "kev-latest",
+    "answers": {"q": {"type": "noul", "noul": 0.9}},
+    "usage": {"input_tokens": 12, "output_tokens": 1},
+    "truncated": False,
+}
 REQUEST = {"model": "kev-4b", "state": "s", "questions": {"q": {"type": "noul"}}, "options": {"max_think": 0}}
 
 
@@ -34,8 +38,12 @@ def test_kev_proxy_rewrites_model_forwards_extras_and_returns_raw_body(monkeypat
     sent = calls[0]
     assert str(sent.url) == "http://127.0.0.1:8008/v1/systemone"
     assert sent.headers["authorization"] == "Bearer kev-key"
-    assert json.loads(sent.content) == {"state": "s", "model": "kev-latest", "questions": {"q": {"type": "noul"}},
-                                        "options": {"max_think": 0}}
+    assert json.loads(sent.content) == {
+        "state": "s",
+        "model": "kev-latest",
+        "questions": {"q": {"type": "noul"}},
+        "options": {"max_think": 0},
+    }
 
 
 def test_url_env_overrides_default(monkeypatch):
@@ -71,7 +79,9 @@ def test_hosted_jev_uses_env_key_and_ignores_typesafe_base_url(monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", "ts-test-key")
     monkeypatch.setenv("TYPESAFE_BASE_URL", "http://127.0.0.1:8080")
     transport, calls = recorder(payload={**ANSWER, "model": "jev-1.13.0"})
-    result = SystemOneHTTP.for_spec(BY_ID["jev-latest"], transport=transport).evaluate(parse({**REQUEST, "model": "jev-latest"}))
+    result = SystemOneHTTP.for_spec(BY_ID["jev-latest"], transport=transport).evaluate(
+        parse({**REQUEST, "model": "jev-latest"})
+    )
     assert result["model"] == "jev-1.13.0"
     assert str(calls[0].url) == "https://api.typesafe.ai/v1/systemone"
     assert calls[0].headers["authorization"] == "Bearer ts-test-key"
@@ -87,23 +97,29 @@ def test_unreachable_upstream_is_unavailable_with_launch_hint():
         backend.evaluate(parse(REQUEST))
 
 
-@pytest.mark.parametrize("status, payload, error", [
-    (422, {"detail": "bad question"}, InvalidRequest),
-    (500, {"error": "boom"}, BackendFailed),
-    (200, {"model": "x", "answers": {"q": {"type": "noul", "noul": "high"}}, "usage": {}}, BackendFailed),
-])
+@pytest.mark.parametrize(
+    "status, payload, error",
+    [
+        (422, {"detail": "bad question"}, InvalidRequest),
+        (500, {"error": "boom"}, BackendFailed),
+        (200, {"model": "x", "answers": {"q": {"type": "noul", "noul": "high"}}, "usage": {}}, BackendFailed),
+    ],
+)
 def test_upstream_errors_map_to_router_errors(status, payload, error):
     transport, _ = recorder(status, payload)
     with pytest.raises(error):
         SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport).evaluate(parse(REQUEST))
 
 
-@pytest.mark.parametrize("model, env, default", [
-    ("tev1-4b-experimental", "SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL", "tev1"),
-    ("kev-4b", "SYSTEMONE_KEV_4B_MODEL", "kev-latest"),
-    ("pplx-decider-v1-27b", "SYSTEMONE_PPLX_DECIDER_V1_27B_MODEL", "jev-latest"),
-    ("openjev", "SYSTEMONE_OPENJEV_MODEL", "openjev"),
-])
+@pytest.mark.parametrize(
+    "model, env, default",
+    [
+        ("tev1-4b-experimental", "SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL", "tev1"),
+        ("kev-4b", "SYSTEMONE_KEV_4B_MODEL", "kev-latest"),
+        ("pplx-decider-v1-27b", "SYSTEMONE_PPLX_DECIDER_V1_27B_MODEL", "jev-latest"),
+        ("openjev", "SYSTEMONE_OPENJEV_MODEL", "openjev"),
+    ],
+)
 def test_model_env_overrides_the_name_sent_upstream(monkeypatch, model, env, default):
     assert BY_ID[model].model_env == env
     transport, calls = recorder()

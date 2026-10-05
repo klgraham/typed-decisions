@@ -17,8 +17,14 @@ def test_models_lists_every_model_with_extra_and_readiness(capsys):
     assert set(out["hardware"]) == {"cuda", "apple_silicon"}
     by_id = {m["id"]: m for m in out["models"]}
     assert {m["hf_repo"] for m in out["models"] if m["hf_repo"]} == {
-        "perplexity-ai/pplx-decider-v1-27b", "openjev/openjev", "togethercomputer/Tev1-4B-experimental",
-        "cua-ai/cua-s1-4b-0.2", "jaredpalmer/kev-4b", "Cloudflare/clef-flash", "Cloudflare/clef"}
+        "perplexity-ai/pplx-decider-v1-27b",
+        "openjev/openjev",
+        "togethercomputer/Tev1-4B-experimental",
+        "cua-ai/cua-s1-4b-0.2",
+        "jaredpalmer/kev-4b",
+        "Cloudflare/clef-flash",
+        "Cloudflare/clef",
+    }
     assert by_id["kev-4b"]["extra"] == "kev"
     assert by_id["kev-4b"]["extra_installed"] is False
     assert by_id["kev-4b"]["url_env"] == "SYSTEMONE_KEV_4B_URL"
@@ -63,10 +69,13 @@ def test_ask_jev_without_key_exits_3_with_clear_message(capsys, body_file):
     assert "TYPESAFE_API_KEY is not set" in out["error"]["message"]
 
 
-@pytest.mark.parametrize("argv, code", [
-    (["ask", "--model", "no-such-model"], 2),
-    (["ask", "/no/such/file.json"], 2),
-])
+@pytest.mark.parametrize(
+    "argv, code",
+    [
+        (["ask", "--model", "no-such-model"], 2),
+        (["ask", "/no/such/file.json"], 2),
+    ],
+)
 def test_ask_input_errors_exit_2(capsys, body_file, argv, code):
     if argv[1] == "--model":
         argv = ["ask", str(body_file), *argv[1:]]
@@ -96,8 +105,9 @@ def test_ask_url_against_running_router(capsys, body_file, running_router):
 
 
 def test_upstream_flag_routes_to_another_system_one_server(capsys, body_file, running_router):
-    code, out = run(capsys, "ask", str(body_file), "--model", "jeeves",
-                    "--upstream", f"jeeves={running_router}#uniform-baseline")
+    code, out = run(
+        capsys, "ask", str(body_file), "--model", "jeeves", "--upstream", f"jeeves={running_router}#uniform-baseline"
+    )
     assert code == 0
     assert (out["model"], out["upstream_model"]) == ("jeeves", "uniform-baseline")
 
@@ -116,7 +126,9 @@ def test_compare_partial_failure_exits_5(capsys, body_file):
 
 
 def test_compare_all_ok_exits_0(capsys, body_file, running_router):
-    code, out = run(capsys, "compare", str(body_file), "-t", "uniform-baseline", "-t", f"url:{running_router}#uniform-baseline")
+    code, out = run(
+        capsys, "compare", str(body_file), "-t", "uniform-baseline", "-t", f"url:{running_router}#uniform-baseline"
+    )
     assert code == 0
     assert out["questions"]["department"]["agree"] is True
 
@@ -137,7 +149,9 @@ def test_download_fetches_the_pinned_revision(capsys, monkeypatch):
     from systemone_serve.catalog import BY_ID
 
     calls = []
-    monkeypatch.setattr(_runtime, "snapshot", lambda repo, revision, allow_patterns=None: calls.append((repo, revision)) or "/snap")
+    monkeypatch.setattr(
+        _runtime, "snapshot", lambda repo, revision, allow_patterns=None: calls.append((repo, revision)) or "/snap"
+    )
     code, out = run(capsys, "download", "kev-4b")
     assert code == 0
     assert calls == [("jaredpalmer/kev-4b", BY_ID["kev-4b"].hf_revision)]
@@ -156,17 +170,23 @@ def test_an_explicit_upstream_wins_over_its_env_vars(monkeypatch):
     monkeypatch.setenv("SYSTEMONE_ADHOC_URL", "http://env-host:9999")
     monkeypatch.setenv("SYSTEMONE_ADHOC_MODEL", "env-model")
     spec = build_router(["adhoc=http://127.0.0.1:7777#cli-model"]).specs["adhoc"]
-    assert (spec.resolved_url(), spec.resolved_model(), spec.url_source()) == ("http://127.0.0.1:7777", "cli-model",
-                                                                                "--upstream")
+    assert (spec.resolved_url(), spec.resolved_model(), spec.url_source()) == (
+        "http://127.0.0.1:7777",
+        "cli-model",
+        "--upstream",
+    )
     spec = build_router(["adhoc=http://127.0.0.1:7777"]).specs["adhoc"]  # no #MODEL: the env var, then the request's
     assert (spec.resolved_url(), spec.resolved_model()) == ("http://127.0.0.1:7777", "env-model")
     monkeypatch.delenv("SYSTEMONE_ADHOC_MODEL")
     assert build_router(["adhoc=http://127.0.0.1:7777"]).specs["adhoc"].resolved_model() is None
 
 
-def test_an_explicit_upstream_is_used_even_when_its_env_vars_point_elsewhere(capsys, body_file, running_router, monkeypatch):
+def test_an_explicit_upstream_is_used_even_when_its_env_vars_point_elsewhere(
+    capsys, body_file, running_router, monkeypatch
+):
     monkeypatch.setenv("SYSTEMONE_JEEVES_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("SYSTEMONE_JEEVES_MODEL", "not-this-one")
-    code, out = run(capsys, "ask", str(body_file), "--model", "jeeves",
-                    "--upstream", f"jeeves={running_router}#uniform-baseline")
+    code, out = run(
+        capsys, "ask", str(body_file), "--model", "jeeves", "--upstream", f"jeeves={running_router}#uniform-baseline"
+    )
     assert code == 0 and (out["model"], out["upstream_model"]) == ("jeeves", "uniform-baseline")

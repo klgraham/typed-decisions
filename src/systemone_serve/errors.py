@@ -7,9 +7,19 @@ error body cannot leak it to stdout or an HTTP response.
 import os
 import re
 
-SECRET_ENVS = ("TYPESAFE_API_KEY", "TOGETHER_API_KEY", "KEV_API_KEY", "AUTOJEV_API_KEY", "SHIM_TOKEN",
-               "SYSTEMONE_SERVE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-               "HF_TOKEN")
+SECRET_ENVS = (
+    "TYPESAFE_API_KEY",
+    "TOGETHER_API_KEY",
+    "KEV_API_KEY",
+    "AUTOJEV_API_KEY",
+    "SHIM_TOKEN",
+    "SYSTEMONE_SERVE_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "HF_TOKEN",
+)
 MIN_SECRET_LENGTH = 6  # shorter values ("local", "1") would scrub ordinary words
 BEARER = re.compile(r"(Bearer\s+)[^\s'\",;]+", re.IGNORECASE)
 
