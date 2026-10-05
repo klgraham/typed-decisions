@@ -147,19 +147,31 @@ def _unit(value: Any) -> bool:
     return _number(value) and -EPSILON <= value <= 1 + EPSILON
 
 
+SUM_TOLERANCE = 0.02  # reported probabilities are rounded (Jev uses 2 decimals), so their sum can pass 1 slightly
+
+
 def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
-    if not isinstance(probabilities, dict) or set(probabilities) != set(keys):
-        raise BackendFailed(f"{where}: probabilities must be keyed by exactly {keys}.")
+    """Options that are present must be real options with values in [0, 1] that sum to at most ~1. Options may be
+    left out: an upstream that reads top-k logprobs (Ollama tev1, top 5) reports only those."""
+    if not isinstance(probabilities, dict):
+        raise BackendFailed(f"{where}: probabilities must be an object keyed by option.")
+    unknown = sorted(set(probabilities) - set(keys))
+    if unknown:
+        raise BackendFailed(f"{where}: probabilities name options that do not exist: {unknown} (options: {keys}).")
     if not all(_unit(value) for value in probabilities.values()):
         raise BackendFailed(f"{where}: every probability must be a number in [0, 1].")
+    total = sum(probabilities.values())
+    if total > 1 + SUM_TOLERANCE:
+        raise BackendFailed(f"{where}: probabilities sum to {total:.4f}, more than 1.")
 
 
 def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
     """Check a backend's response against the System One contract for this request; raise BackendFailed if not.
 
-    Structure comes from the SDK's wire schema. On top of that: one answer per question and no others, each answer
-    of its question's type, noul/confidence/probabilities in [0, 1], choice among the criteria, probability keys
-    equal to the option keys, score within the rubric, and non-negative integer usage.
+    Structure comes from the SDK's wire schema (https://docs.typesafe.ai/api.md). On top of that: one answer per
+    question and no others, each answer of its question's type, noul/confidence in [0, 1], choice among the criteria,
+    probabilities only for real options with a sum of at most ~1 (options may be omitted), score within the rubric,
+    and token counts that are whole non-negative numbers (`12` or `12.0`, as the wire schema accepts).
     """
     try:
         SystemOneResponse.model_validate(result)
@@ -197,7 +209,6 @@ def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
             if legend is not None and set(legend) != set(keys):
                 raise BackendFailed(f"{where}: legend must be keyed by exactly {keys}.")
     usage = result["usage"]
-    if not all(isinstance(usage[k], int) and not isinstance(usage[k], bool) and usage[k] >= 0
-               for k in ("input_tokens", "output_tokens")):
-        raise BackendFailed(f"{name}: usage token counts must be non-negative integers.")
+    if not all(_number(usage[k]) and usage[k] >= 0 and float(usage[k]).is_integer() for k in ("input_tokens", "output_tokens")):
+        raise BackendFailed(f"{name}: usage token counts must be non-negative whole numbers.")
     return result

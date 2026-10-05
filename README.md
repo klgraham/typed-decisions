@@ -81,11 +81,11 @@ sys1 compare examples/support-ticket.json \
 sys1 download clef-flash                            # Hugging Face snapshot; prints the path
 ```
 
-A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range); a violation is `backend_failed`.
+A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range, probabilities only for real options and summing to at most 1; an upstream that reports only its top-k options is fine); a violation is `backend_failed`.
 
 `serve --launch` runs each upstream in its own process group with only the keys it needs (its own auth variable and `HF_TOKEN`). SIGTERM, SIGHUP, or Ctrl-C stops the whole group before exit, including during the readiness wait. A port that is already taken fails the launch instead of being mistaken for the new upstream.
 
-`serve` refuses a non-loopback `--host` unless `SYSTEMONE_SERVE_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
+`serve` refuses a non-loopback `--host` (loopback is `localhost`, `127.0.0.0/8`, or `::1`; `0.0.0.0` and `::` listen on every interface, so they count as non-loopback) unless `SYSTEMONE_SERVE_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
 
 `compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`. NAME cannot be a catalog id (set that model's `SYSTEMONE_<ID>_URL` instead), and URL cannot be the router itself.
 
@@ -114,9 +114,9 @@ Example `compare` output (trimmed):
 | 3 | backend unavailable: missing extra, hardware, an API key unset or rejected (401/403), or a stopped upstream | 503 |
 | 4 | backend failed: upstream or model error, or an answer outside the contract | 502 |
 | 5 | `compare` only: at least one target failed (details in the JSON) | n/a |
-| 129 / 130 / 143 | `serve` stopped by SIGHUP / SIGINT / SIGTERM, after stopping launched upstreams | n/a |
+| 129 / 130 / 143 | `serve` stopped by SIGHUP / SIGINT / SIGTERM, after stopping launched upstreams (a second signal does not change the code) | n/a |
 
-Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the same body for every failure. Messages are scrubbed of the values of the key variables below, in case an upstream echoes one.
+Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the same body for every failure. Messages, and the stderr traceback of an unexpected error, are scrubbed of the values of the key variables below and of any `Bearer` token, in case an upstream echoes one.
 
 ### Environment
 

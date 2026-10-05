@@ -6,6 +6,7 @@ Lifecycle guarantees:
 - SIGTERM, SIGHUP, and SIGINT raise `Terminated` while upstreams are running, including during the readiness wait
   and inside uvicorn (which re-raises the signal after its own graceful shutdown, and would otherwise either kill
   the process outright or swallow KeyboardInterrupt), so cleanup always runs and the exit code is 128 + signal.
+  The first signal wins: a second one interrupts neither cleanup nor exit and does not change the code.
 - A port that is already taken fails the launch instead of letting a stale server pass the readiness check, and a
   child must still be alive after it first answers.
 """
@@ -165,20 +166,52 @@ def wait_ready(url: str, process: subprocess.Popen[bytes], timeout: float, auth_
 
 @contextmanager
 def _exit_signals_raise() -> Iterator[None]:
-    """Turn SIGTERM/SIGHUP/SIGINT into `Terminated` for the duration (main thread only; signals are main-thread only)."""
+    """Turn SIGTERM/SIGHUP/SIGINT into `Terminated` for the duration (main thread only; signals are main-thread only).
+
+    The first signal wins. The handler ignores every exit signal before raising, a copy of it that someone else
+    reinstalls (uvicorn restores the handlers it found) does nothing, and exit signals stay ignored while the
+    process cleans up and exits. If code inside swallows the `Terminated` (uvicorn's lifespan task can), it is
+    raised again on the way out, so the exit is always 128+signum and never a raw kill or a lost signal.
+    """
     if threading.current_thread() is not threading.main_thread():
         yield
         return
+    received: list[int] = []
 
     def handler(signum: int, frame: Any) -> None:
+        if received:
+            return
+        received.append(signum)
+        _ignore_exit_signals()
         raise Terminated(signum)
 
     previous = {signum: signal.signal(signum, handler) for signum in EXIT_SIGNALS}
     try:
         yield
-    finally:
-        for signum, old in previous.items():
-            signal.signal(signum, old)
+    except BaseException as error:
+        if not received:
+            _restore(previous)
+            raise
+        # Ignore again on the way out: uvicorn may have reinstalled `handler`, and interpreter shutdown resets Python
+        # handlers (not SIG_IGN) to the default action, so a late second signal would otherwise kill us raw.
+        _ignore_exit_signals()
+        if isinstance(error, Terminated):
+            raise
+        raise Terminated(received[0]) from error
+    if received:
+        _ignore_exit_signals()
+        raise Terminated(received[0])
+    _restore(previous)
+
+
+def _ignore_exit_signals() -> None:
+    for signum in EXIT_SIGNALS:
+        signal.signal(signum, signal.SIG_IGN)
+
+
+def _restore(handlers: dict[int, Any]) -> None:
+    for signum, handler in handlers.items():
+        signal.signal(signum, handler)
 
 
 @contextmanager

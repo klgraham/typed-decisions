@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import os
+import traceback
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -46,7 +47,7 @@ def create_app(router: Router, api_key: str | None = None) -> FastAPI:
         except ServeError as error:
             return JSONResponse(error_body(error), status_code=error.status)
         except Exception as error:  # a bug in this package; the router already maps every backend failure
-            log.exception("unexpected error")
+            log.error("unexpected error\n%s", scrub(traceback.format_exc()))  # scrubbed: it may quote a body or key
             return JSONResponse({"error": {"code": "internal_error", "message": scrub(f"{type(error).__name__}: {error}")}},
                                 status_code=500)
 

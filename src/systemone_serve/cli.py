@@ -110,11 +110,17 @@ def _same_address(url: str, host: str, port: int) -> bool:
 
 
 def _check_bindable(host: str, port: int) -> None:
+    """Bind once the way uvicorn will, picking the address family from the host (`::1` and `::` are IPv6)."""
     try:
-        with socket.create_server((host, port), reuse_port=False) as _:
+        family = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)[0][0]
+        with socket.create_server((host, port), family=family, reuse_port=False) as _:
             pass
-    except OSError as error:
+    except OSError as error:  # socket.gaierror included
         raise InvalidRequest(f"Cannot listen on {host}:{port}: {error.strerror or error}.") from error
+
+
+def _url(host: str, port: int) -> str:
+    return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -146,7 +152,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if args.launch and not to_launch:
         raise InvalidRequest("--launch needs at least one --model.")
     with launched(to_launch, timeout=args.launch_timeout) as started:
-        emit({"event": "listening", "url": f"http://{args.host}:{args.port}", "models": router.ids(),
+        emit({"event": "listening", "url": _url(args.host, args.port), "models": router.ids(),
               "launched": started, "auth": authenticated, "exposed": exposed})
         sys.stdout.flush()
         uvicorn.run(create_app(router), host=args.host, port=args.port, log_level="warning")
@@ -218,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     except Terminated as stopped:
         return 128 + stopped.signum
     except Exception as error:  # noqa: BLE001 - a bug: JSON on stdout as always, the traceback on stderr
-        traceback.print_exc(file=sys.stderr)
+        sys.stderr.write(scrub(traceback.format_exc()))  # scrubbed: the traceback may quote a body or key
         emit({"error": {"code": "internal_error", "message": scrub(f"{type(error).__name__}: {error}")}})
         return 1
 
