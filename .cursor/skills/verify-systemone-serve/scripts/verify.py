@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Launch, check, drive, and clean up `sys1` for verification, keeping evidence that survives cleanup.
 
 Usage and the evidence layout are in ../SKILL.md; `verify.py <command> -h` lists each command's options. The repo is
