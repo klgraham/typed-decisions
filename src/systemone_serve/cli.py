@@ -27,6 +27,7 @@ from systemone_serve.errors import InvalidRequest, ServeError, UnknownModel, scr
 from systemone_serve.router import Router, upstream_spec
 
 PARTIAL = 5
+BACKLOG = 2048  # uvicorn's default
 SHUTDOWN_GRACE = 5.0  # seconds a stopping `serve` waits for in-flight requests (a hung upstream holds them for 300 s)
 EXIT_GRACE = 2.0  # then seconds it waits for request threads still blocked on an upstream before exiting anyway
 
@@ -114,9 +115,11 @@ def _same_address(url: str, host: str, port: int) -> bool:
 
 
 def _bind(host: str, port: int) -> list[socket.socket]:
-    """Bind every address uvicorn would, all at once, the way asyncio's `create_server` does: each `getaddrinfo` result
-    (`localhost` is usually `::1` and `127.0.0.1`), SO_REUSEADDR, and IPV6_V6ONLY on IPv6 sockets. uvicorn serves on
-    these sockets, so the port is held from this check on; it starts listening only when uvicorn starts."""
+    """Bind and listen on every address uvicorn would, the way asyncio's `create_server` does: each `getaddrinfo`
+    result (`localhost` is usually `::1` and `127.0.0.1`), SO_REUSEADDR, and IPV6_V6ONLY on IPv6 sockets. Only
+    portable socket options are used; Linux and macOS differ in which other SO_REUSEADDR sockets may share a port, and
+    either way a failure here is exit 2. uvicorn serves on these sockets (its own listen() on them is a no-op), so the
+    port is ours from here on, and connections that arrive before uvicorn starts wait in the backlog."""
     sockets: list[socket.socket] = []
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
@@ -127,6 +130,8 @@ def _bind(host: str, port: int) -> list[socket.socket]:
             if family == socket.AF_INET6 and hasattr(socket, "IPPROTO_IPV6"):
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             sock.bind(address)
+        for sock in sockets:
+            sock.listen(BACKLOG)
     except OSError as error:  # socket.gaierror included
         _close(sockets)
         raise InvalidRequest(f"Cannot listen on {host}:{port}: {error.strerror or error}.") from error
@@ -139,11 +144,10 @@ def _close(sockets: list[socket.socket]) -> None:
 
 
 def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -> None:
-    """Serve on the sockets `_bind` holds, so the only address failure left is listen() being refused (another
-    SO_REUSEADDR socket bound the port and listened first): invalid input (2), like any port in use. Any other startup
-    failure (uvicorn exits with its STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app
-    failing to start: a bug, 1, with uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE
-    seconds for in-flight requests."""
+    """Serve on the sockets `_bind` already listens on. An OSError before startup is still reported as the port (2),
+    though `_bind` leaves nothing for uvicorn to bind. Any other startup failure (uvicorn exits with its
+    STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app failing to start: a bug, 1, with
+    uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests."""
     import uvicorn
     from uvicorn.config import STARTUP_FAILURE
 
