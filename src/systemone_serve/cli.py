@@ -7,17 +7,21 @@ Exit codes:
   3  backend unavailable: missing extra, hardware, API key, or a stopped upstream
   4  backend failed: the model or upstream returned an error or an off-contract answer
   5  compare: at least one target failed (each failure is in the JSON)
+  129, 130, 143  stopped by SIGHUP, SIGINT, or SIGTERM (launched upstreams are stopped first)
 """
 
 import argparse
 import json
 import os
+import socket
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from systemone_serve import catalog
-from systemone_serve.errors import InvalidRequest, ServeError, UnknownModel
+from systemone_serve.errors import InvalidRequest, ServeError, UnknownModel, scrub
 from systemone_serve.router import Router, upstream_spec
 
 PARTIAL = 5
@@ -49,6 +53,9 @@ def build_router(upstreams: list[str]) -> Router:
         name, sep, url = item.partition("=")
         if not sep or not name or not url:
             raise InvalidRequest(f"--upstream takes NAME=URL, got {item!r}.")
+        if name in catalog.BY_ID:
+            raise InvalidRequest(f"--upstream {name} would replace the catalog model {name!r}; pick another NAME "
+                                 f"(to move a catalog upstream, set {catalog.BY_ID[name].url_env} instead).")
         specs.append(upstream_spec(name, url))
     return Router(specs)
 
@@ -92,11 +99,42 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0 if all(entry["ok"] for entry in result["results"]) else PARTIAL
 
 
+def _same_address(url: str, host: str, port: int) -> bool:
+    from systemone_serve.launch import is_loopback
+
+    parsed = urlparse(url.partition("#")[0])
+    if parsed.port != port:
+        return False
+    target = parsed.hostname or ""
+    return target == host or (is_loopback(target) and (is_loopback(host) or host in ("0.0.0.0", "::")))
+
+
+def _check_bindable(host: str, port: int) -> None:
+    try:
+        with socket.create_server((host, port), reuse_port=False) as _:
+            pass
+    except OSError as error:
+        raise InvalidRequest(f"Cannot listen on {host}:{port}: {error.strerror or error}.") from error
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
-    from systemone_serve.launch import launched
+    from systemone_serve.launch import is_loopback, launched
     from systemone_serve.server import SERVE_KEY_ENV, create_app
+
+    authenticated = bool(os.environ.get(SERVE_KEY_ENV, "").strip())
+    exposed = not is_loopback(args.host)
+    if exposed and not authenticated and not args.allow_unauthenticated:
+        raise InvalidRequest(f"Refusing to listen on {args.host} without {SERVE_KEY_ENV}: anyone who can reach it could "
+                             f"spend this machine's TYPESAFE_API_KEY and TOGETHER_API_KEY. Set {SERVE_KEY_ENV}, "
+                             "bind to 127.0.0.1, or pass --allow-unauthenticated.")
+    if exposed and not authenticated:
+        print(f"warning: serving on {args.host} with no authentication (--allow-unauthenticated)", file=sys.stderr)
+    for item in args.upstream:
+        if _same_address(item.partition("=")[2], args.host, args.port):
+            raise InvalidRequest(f"--upstream {item} points at this server itself.")
+    _check_bindable(args.host, args.port)
 
     router = build_router(args.upstream)
     if args.model:
@@ -109,7 +147,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         raise InvalidRequest("--launch needs at least one --model.")
     with launched(to_launch, timeout=args.launch_timeout) as started:
         emit({"event": "listening", "url": f"http://{args.host}:{args.port}", "models": router.ids(),
-              "launched": started, "auth": bool(os.environ.get(SERVE_KEY_ENV, "").strip())})
+              "launched": started, "auth": authenticated, "exposed": exposed})
         sys.stdout.flush()
         uvicorn.run(create_app(router), host=args.host, port=args.port, log_level="warning")
     return 0
@@ -123,7 +161,8 @@ def cmd_download(args: argparse.Namespace) -> int:
         raise UnknownModel(f"Unknown model {args.model!r}.")
     if not spec.hf_repo:
         raise InvalidRequest(f"{spec.id} has no Hugging Face weights to download.")
-    emit({"model": spec.id, "hf_repo": spec.hf_repo, "path": snapshot(spec.hf_repo), "license": spec.license})
+    path = snapshot(spec.hf_repo, spec.hf_revision)
+    emit({"model": spec.id, "hf_repo": spec.hf_repo, "hf_revision": spec.hf_revision, "path": path, "license": spec.license})
     return 0
 
 
@@ -144,6 +183,8 @@ def parser() -> argparse.ArgumentParser:
     serve.add_argument("--model", action="append", help="Serve only these models (repeatable). Default: all.")
     serve.add_argument("--launch", action="store_true", help="Also start each --model's upstream server.")
     serve.add_argument("--launch-timeout", type=float, default=1800.0, help="Seconds to wait per upstream (downloads included).")
+    serve.add_argument("--allow-unauthenticated", action="store_true",
+                       help="Allow a non-loopback --host without SYSTEMONE_SERVE_API_KEY (anyone reaching it spends your keys).")
     serve.set_defaults(run=cmd_serve)
 
     ask = sub.add_parser("ask", parents=[upstream], help="Send one System One request and print the response.")
@@ -165,6 +206,8 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from systemone_serve.launch import Terminated
+
     args = parser().parse_args(argv)
     try:
         return args.run(args)
@@ -172,6 +215,12 @@ def main(argv: list[str] | None = None) -> int:
         return fail(error)
     except KeyboardInterrupt:
         return 130
+    except Terminated as stopped:
+        return 128 + stopped.signum
+    except Exception as error:  # noqa: BLE001 - a bug: JSON on stdout as always, the traceback on stderr
+        traceback.print_exc(file=sys.stderr)
+        emit({"error": {"code": "internal_error", "message": scrub(f"{type(error).__name__}: {error}")}})
+        return 1
 
 
 if __name__ == "__main__":

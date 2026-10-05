@@ -14,7 +14,9 @@ TYPESAFE_URL = "https://api.typesafe.ai"
 
 @dataclass(frozen=True)
 class Step:
-    """One upstream process `serve --launch` starts. `{python}`, `{snapshot}`, and `{port}` are filled in."""
+    """One upstream process `serve --launch` starts. `{python}`, `{snapshot}`, `{revision}`, and `{port}` are filled in.
+
+    `{snapshot}` is the Hugging Face snapshot at the spec's pinned `hf_revision`."""
 
     command: tuple[str, ...]
     ready_path: str
@@ -31,6 +33,7 @@ class ModelSpec:
     stack: str
     hardware: str
     hf_repo: str | None = None
+    hf_revision: str | None = None  # commit SHA; code and weights from the snapshot are used at exactly this commit
     extra: str | None = None
     probe_modules: tuple[str, ...] = ()
     url: str | None = None
@@ -71,6 +74,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         kind="systemone-http",
         title="Perplexity pplx-decider-v1-27b",
         hf_repo="perplexity-ai/pplx-decider-v1-27b",
+        hf_revision="5117a6c7fe73b19308dc1a6b0fb529a40c2ecad4",
         license="Apache-2.0",
         stack="autojev.server (bundled in the HF repo under source/) on torch 2.14.0 + transformers 5.17.0",
         hardware="CUDA, ~49 GiB of weights plus working memory",
@@ -92,6 +96,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         kind="systemone-http",
         title="OpenJev",
         hf_repo="openjev/openjev",
+        hf_revision="ac97900fd034fdd7e7e536f3d4c21b836cae0750",
         license="CC-BY-NC-4.0 (weights); Apache-2.0 (helper and serve files)",
         stack="vLLM 0.29.0 + helper/shim.py (one-token letter logprobs)",
         hardware="CUDA: one H100 in FP8 as measured. MLX siblings on Apple silicon (text only); GGUF via llama.cpp",
@@ -134,6 +139,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         kind="systemone-http",
         title="Together Tev1-4B-experimental, via Ollama",
         hf_repo="togethercomputer/Tev1-4B-experimental",
+        hf_revision="0b7becf017daa0e5eb222f8ce7483c8c8259c52f",
         license="Not stated (fine-tune license being finalized); base Qwen3.5-4B is Apache-2.0",
         stack="Ollama >= 0.35 /v1/systemone (model tev1)",
         hardware="Whatever Ollama runs on: CPU, CUDA, or Apple silicon",
@@ -147,19 +153,21 @@ CATALOG: tuple[ModelSpec, ...] = (
         kind="tev1-together",
         title="Together Tev1-4B-experimental, via Together chat completions (adapted)",
         hf_repo="togethercomputer/Tev1-4B-experimental",
+        hf_revision="0b7becf017daa0e5eb222f8ce7483c8c8259c52f",
         license="Not stated (fine-tune license being finalized); base Qwen3.5-4B is Apache-2.0",
         stack="Together chat completions, request shape from togethercomputer/tev1 examples/decide.py",
         hardware="none (hosted by Together)",
         url="https://api.together.ai/v1",
         upstream_model="together/Tev1-4B-experimental",
         auth_env="TOGETHER_API_KEY",
-        notes="Adapter: each question becomes 2-24 lettered options; probabilities come from top-5 letter logprobs.",
+        notes="Adapter: each question becomes 2-24 lettered options; probabilities come from top-5 letter logprobs, so with more than 5 options the rest get 0.",
     ),
     ModelSpec(
         id="cua-s1-4b-0.2",
         kind="cua",
         title="Cua cua-s1-4b-0.2 (adapted)",
         hf_repo="cua-ai/cua-s1-4b-0.2",
+        hf_revision="16818868b0cc7813808aae4e87b417657046ab79",
         license="Apache-2.0 (adapter); base Qwen/Qwen3.5-4B governed by its own license",
         stack="cua_s1.four_b.FourBModel (trycua/cua libs/cua-s1) LoRA on Qwen/Qwen3.5-4B",
         hardware="PyTorch mps (measured on M1 Ultra) or CPU (measured); CUDA accepted, not measured",
@@ -172,6 +180,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         kind="systemone-http",
         title="Kev-4B",
         hf_repo="jaredpalmer/kev-4b",
+        hf_revision="6cfce5c2fa4b4bd64026336ab649c5ca78857d52",
         license="Apache-2.0",
         stack="jaredpalmer/kev `python -m kev.serve` (FastAPI)",
         hardware="CUDA bf16 with fused DeltaNet kernels (~16 GB free) or MLX on Apple silicon",
@@ -182,7 +191,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         auth_env="KEV_API_KEY",
         launch=(
             Step(
-                command=("{python}", "-m", "kev.serve", "--run", "jaredpalmer/kev-4b", "--port", "{port}"),
+                command=("{python}", "-m", "kev.serve", "--run", "jaredpalmer/kev-4b@{revision}", "--port", "{port}"),
                 ready_path="/v1/models",
             ),
         ),
@@ -193,6 +202,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         kind="clef",
         title="Cloudflare Clef-Flash (9B)",
         hf_repo="Cloudflare/clef-flash",
+        hf_revision="17f0b0ad64efb65d273590632833508766b2aae6",
         license="Apache-2.0",
         stack="joint_schema_model.py systemone() in process, transformers on CUDA",
         hardware="CUDA (tested on one H200 with torch 2.11, transformers 5.10.2)",
@@ -205,6 +215,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         kind="clef",
         title="Cloudflare Clef (27B)",
         hf_repo="Cloudflare/clef",
+        hf_revision="2f3de3dd85f379784083b0814d997ab627200f0c",
         license="Apache-2.0",
         stack="joint_schema_model.py systemone() in process, transformers on CUDA",
         hardware="CUDA (tested on one H200 with torch 2.11, transformers 5.10.2)",
@@ -231,9 +242,10 @@ def extra_installed(spec: ModelSpec) -> bool:
 
 
 def _module_present(name: str) -> bool:
+    """find_spec on a dotted name imports its parents, which may fail in arbitrary ways (CUDA init, OSError)."""
     try:
         return importlib.util.find_spec(name) is not None
-    except (ImportError, ValueError):
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -250,6 +262,7 @@ def status(spec: ModelSpec) -> dict[str, object]:
         "kind": spec.kind,
         "title": spec.title,
         "hf_repo": spec.hf_repo,
+        "hf_revision": spec.hf_revision,
         "license": spec.license,
         "stack": spec.stack,
         "hardware": spec.hardware,
