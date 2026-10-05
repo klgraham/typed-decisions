@@ -35,7 +35,7 @@ def test_launch_then_proxy(body):
     with launched([spec], timeout=60) as started:
         assert started == ["fake-upstream"]
         result = SystemOneHTTP.for_spec(spec).evaluate(parse({**body, "model": "fake-upstream"}))
-    assert result["model"] == "uniform-baseline"
+    assert (result["model"], result["upstream_model"]) == ("fake-upstream", "uniform-baseline")
     assert result["answers"]["is_urgent"] == {"type": "noul", "noul": 0.5}
 
 

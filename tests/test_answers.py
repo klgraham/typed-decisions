@@ -2,7 +2,7 @@ import pytest
 from typesafe_sdk import Choice, Noul, Score
 
 from systemone_serve.answers import Option, answer, options, parse
-from systemone_serve.errors import InvalidRequest
+from systemone_serve.errors import BackendFailed, InvalidRequest
 
 
 def test_parse_keeps_extra_fields_and_types_questions(body):
@@ -53,5 +53,5 @@ def test_answer_score_is_expected_level():
 
 
 def test_answer_rejects_all_zero():
-    with pytest.raises(ValueError):
+    with pytest.raises(BackendFailed):
         answer(Noul(), {})

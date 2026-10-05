@@ -90,7 +90,7 @@ def test_upstream_flag_routes_to_another_system_one_server(capsys, body_file, ru
     code, out = run(capsys, "ask", str(body_file), "--model", "jeeves",
                     "--upstream", f"jeeves={running_router}#uniform-baseline")
     assert code == 0
-    assert out["model"] == "uniform-baseline"
+    assert (out["model"], out["upstream_model"]) == ("jeeves", "uniform-baseline")
 
 
 def test_upstream_that_does_not_know_the_model_is_a_backend_failure(capsys, body_file, running_router):
@@ -121,6 +121,18 @@ def test_compare_bad_llm_target_is_reported(capsys, body_file):
 def test_download_model_without_weights_exits_2(capsys):
     code, out = run(capsys, "download", "uniform-baseline")
     assert code == 2
+
+
+def test_download_fetches_the_pinned_revision(capsys, monkeypatch):
+    from systemone_serve.backends import _runtime
+    from systemone_serve.catalog import BY_ID
+
+    calls = []
+    monkeypatch.setattr(_runtime, "snapshot", lambda repo, revision, allow_patterns=None: calls.append((repo, revision)) or "/snap")
+    code, out = run(capsys, "download", "kev-4b")
+    assert code == 0
+    assert calls == [("jaredpalmer/kev-4b", BY_ID["kev-4b"].hf_revision)]
+    assert out["hf_revision"] == BY_ID["kev-4b"].hf_revision and out["path"] == "/snap"
 
 
 def test_bad_arguments_exit_2(capsys):

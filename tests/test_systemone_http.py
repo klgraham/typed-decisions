@@ -30,7 +30,7 @@ def test_kev_proxy_rewrites_model_forwards_extras_and_returns_raw_body(monkeypat
     monkeypatch.setenv("KEV_API_KEY", "kev-key")
     transport, calls = recorder()
     backend = SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport)
-    assert backend.evaluate(parse(REQUEST)) == ANSWER
+    assert backend.evaluate(parse(REQUEST)) == {**ANSWER, "model": "kev-4b", "upstream_model": "kev-latest"}
     sent = calls[0]
     assert str(sent.url) == "http://127.0.0.1:8008/v1/systemone"
     assert sent.headers["authorization"] == "Bearer kev-key"
