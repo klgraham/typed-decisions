@@ -29,7 +29,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from ipaddress import ip_address
 from typing import Any
@@ -224,8 +224,10 @@ def _exit_signals_raise(restore: bool = True) -> Iterator[None]:
 
     The first signal wins. The handler ignores every exit signal before raising, a copy of it that someone else
     reinstalls (uvicorn restores the handlers it found) does nothing, and exit signals stay ignored while the
-    process cleans up and exits. If code inside swallows the `Terminated` (uvicorn's lifespan task can), it is
-    raised again on the way out, so the exit is always 128+signum and never a raw kill or a lost signal.
+    process cleans up and exits. If code inside swallows the `Terminated` (uvicorn's lifespan task can, and asyncio
+    and uvicorn catch BaseException around socket writes and ASGI apps), it is raised again on the way out, so the
+    exit is always 128+signum and never a raw kill or a lost signal; `stopped_by_exit_signals` makes sure a way out
+    comes even then.
     With `restore` the earlier handlers come back on the way out (after the caller's cleanup); without it exit
     signals stay ignored, for a process that is about to exit.
     """
@@ -239,6 +241,8 @@ def _exit_signals_raise(restore: bool = True) -> Iterator[None]:
             return
         received.append(signum)
         _ignore_exit_signals()
+        for hook in tuple(_STOP_HOOKS):
+            hook()
         raise Terminated(signum)
 
     previous = {signum: signal.signal(signum, handler) for signum in EXIT_SIGNALS}
@@ -258,6 +262,22 @@ def _exit_signals_raise(restore: bool = True) -> Iterator[None]:
         _leave(previous, restore)
         raise Terminated(received[0])
     _restore(previous)
+
+
+_STOP_HOOKS: list[Callable[[], None]] = []
+
+
+@contextmanager
+def stopped_by_exit_signals(stop: Callable[[], None]) -> Iterator[None]:
+    """While inside, the first exit signal also calls `stop` (the CLI passes one that sets uvicorn's `should_exit`).
+    The `Terminated` the handler raises lands wherever the main thread is, and if that is inside a socket write or a
+    request (asyncio and uvicorn catch BaseException there) it is swallowed, exit signals stay ignored, and nothing
+    would ever stop the server. `stop` ends the serve loop anyway, and the signal is raised again on the way out."""
+    _STOP_HOOKS.append(stop)
+    try:
+        yield
+    finally:
+        _STOP_HOOKS.remove(stop)
 
 
 def _leave(previous: dict[int, Any], restore: bool) -> None:

@@ -147,14 +147,18 @@ def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -
     """Serve on the sockets `_bind` already listens on. An OSError before startup is still reported as the port (2),
     though `_bind` leaves nothing for uvicorn to bind. Any other startup failure (uvicorn exits with its
     STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app failing to start: a bug, 1, with
-    uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests."""
+    uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests, and
+    stops even if the signal's `Terminated` was swallowed inside a request (see `stopped_by_exit_signals`)."""
     import uvicorn
     from uvicorn.config import STARTUP_FAILURE
+
+    from systemone_serve.launch import stopped_by_exit_signals
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning",
                                            timeout_graceful_shutdown=SHUTDOWN_GRACE))
     try:
-        server.run(sockets=sockets)
+        with stopped_by_exit_signals(lambda: setattr(server, "should_exit", True)):
+            server.run(sockets=sockets)
     except OSError as error:
         if server.started:
             raise
