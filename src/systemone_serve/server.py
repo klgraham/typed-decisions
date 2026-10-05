@@ -2,7 +2,8 @@
 
 POST /v1/systemone refuses (HTTP 508, `loop_detected`) a request whose hop header already names this router, or that
 has passed through MAX_HOPS routers, so a misrouted upstream cannot make the router call itself without end. A hop header
-with an entry that is not a router id (see `hop_chain`) is `invalid_request` (422), before anything is forwarded."""
+with an entry that is not a router id (see `hop_chain`) is `invalid_request` (422), before anything is forwarded.
+Repeated hop header lines are read as one comma-separated list, in order."""
 
 import hmac
 import json
@@ -44,7 +45,9 @@ def create_app(router: Router, api_key: str | None = None) -> FastAPI:
         if (denied := unauthorized(request)) is not None:
             return denied
         try:
-            via = hop_chain(request.headers.get(HOP_HEADER))
+            # Every header line counts (RFC 9110 list semantics): a proxy that adds its own line before the router's
+            # must not hide the router's id, or the chain would never grow and the loop guard never fire.
+            via = hop_chain(",".join(request.headers.getlist(HOP_HEADER)))
         except ServeError as error:
             return JSONResponse(error_body(error), status_code=error.status)
         if router.instance in via or len(via) >= MAX_HOPS:
