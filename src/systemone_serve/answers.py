@@ -6,13 +6,17 @@ those options however their model does, and hand the probabilities back to `answ
 """
 
 import json
+import math
 from dataclasses import dataclass
 from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter, ValidationError
 from typesafe_sdk import Choice, Noul, Score
+from typesafe_sdk._schemas.models import (
+    SystemOneResponse,  # the wire schema generated from api.typesafe.ai/openapi.json
+)
 
-from systemone_serve.errors import InvalidRequest
+from systemone_serve.errors import BackendFailed, InvalidRequest
 
 Question = Annotated[Noul | Choice | Score, Field(discriminator="type")]
 _QUESTIONS = TypeAdapter(dict[str, Question])
@@ -51,6 +55,8 @@ def parse(body: Any) -> Request:
         raise InvalidRequest('"model" must be a nonempty string.')
     if body.get("state") is None:
         raise InvalidRequest('"state" is required.')
+    if not isinstance(body["state"], (str, dict, list)):
+        raise InvalidRequest('"state" must be a string, an object, or an array.')
     questions = body.get("questions")
     if not isinstance(questions, dict) or not questions:
         raise InvalidRequest('"questions" must be a nonempty object.')
@@ -100,8 +106,8 @@ def answer(question: Noul | Choice | Score, probabilities: dict[str, float]) -> 
     keys = [option.key for option in options(question)]
     raw = [max(float(probabilities.get(key, 0.0)), 0.0) for key in keys]
     total = sum(raw)
-    if total <= 0:
-        raise ValueError("The model gave no probability to any option.")
+    if not math.isfinite(total) or total <= 0:
+        raise BackendFailed("The model gave no usable probability to any option.")
     normalized = {key: value / total for key, value in zip(keys, raw)}
     if isinstance(question, Noul):
         return {"type": "noul", "noul": _round(normalized["true"])}
@@ -128,3 +134,70 @@ def _round(value: float) -> float:
 
 def response(model: str, answers: dict[str, dict[str, Any]], input_tokens: int = 0, output_tokens: int = 0) -> dict[str, Any]:
     return {"model": model, "answers": answers, "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}}
+
+
+EPSILON = 1e-6
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _unit(value: Any) -> bool:
+    return _number(value) and -EPSILON <= value <= 1 + EPSILON
+
+
+def _probabilities(where: str, probabilities: Any, keys: list[str]) -> None:
+    if not isinstance(probabilities, dict) or set(probabilities) != set(keys):
+        raise BackendFailed(f"{where}: probabilities must be keyed by exactly {keys}.")
+    if not all(_unit(value) for value in probabilities.values()):
+        raise BackendFailed(f"{where}: every probability must be a number in [0, 1].")
+
+
+def validate(request: Request, result: Any, name: str) -> dict[str, Any]:
+    """Check a backend's response against the System One contract for this request; raise BackendFailed if not.
+
+    Structure comes from the SDK's wire schema. On top of that: one answer per question and no others, each answer
+    of its question's type, noul/confidence/probabilities in [0, 1], choice among the criteria, probability keys
+    equal to the option keys, score within the rubric, and non-negative integer usage.
+    """
+    try:
+        SystemOneResponse.model_validate(result)
+    except ValidationError as error:
+        first = error.errors(include_url=False)[0]
+        where = ".".join(str(part) for part in first["loc"])
+        raise BackendFailed(f"{name}: response is outside the System One contract: {first['msg']} at {where}.") from error
+    answers = result["answers"]
+    extra = sorted(set(answers) - set(request.questions))
+    missing = sorted(set(request.questions) - set(answers))
+    if missing:
+        raise BackendFailed(f"{name}: no answer for {', '.join(missing)}.")
+    if extra:
+        raise BackendFailed(f"{name}: answered questions that were not asked: {', '.join(extra)}.")
+    for qid, question in request.questions.items():
+        given, where = answers[qid], f'{name}: answer "{qid}"'
+        if given.get("type") != question.type:
+            raise BackendFailed(f"{where} is a {given.get('type')!r} answer to a {question.type!r} question.")
+        if isinstance(question, Noul):
+            if not _unit(given.get("noul")):
+                raise BackendFailed(f"{where}: noul must be a number in [0, 1].")
+            continue
+        if not _unit(given.get("confidence")):
+            raise BackendFailed(f"{where}: confidence must be a number in [0, 1].")
+        keys = [option.key for option in options(question)]
+        _probabilities(where, given.get("probabilities"), keys)
+        if isinstance(question, Choice):
+            if given.get("choice") not in question.criteria:
+                raise BackendFailed(f"{where}: choice {given.get('choice')!r} is not one of {keys}.")
+        else:
+            top = len(question.criteria) - 1
+            if not (_number(given.get("score")) and -EPSILON <= given["score"] <= top + EPSILON):
+                raise BackendFailed(f"{where}: score must be a number in [0, {top}].")
+            legend = given.get("legend")
+            if legend is not None and set(legend) != set(keys):
+                raise BackendFailed(f"{where}: legend must be keyed by exactly {keys}.")
+    usage = result["usage"]
+    if not all(isinstance(usage[k], int) and not isinstance(usage[k], bool) and usage[k] >= 0
+               for k in ("input_tokens", "output_tokens")):
+        raise BackendFailed(f"{name}: usage token counts must be non-negative integers.")
+    return result

@@ -14,8 +14,10 @@ from systemone_serve.errors import (
     BackendUnavailable,
     InvalidRequest,
     ServeError,
+    describe,
+    scrub,
 )
-from systemone_serve.router import Router, upstream_spec
+from systemone_serve.router import Router, checked, upstream_spec
 
 
 class LLM:
@@ -57,7 +59,7 @@ def resolve(target: str, router: Router) -> tuple[Backend, str | None]:
     if target.startswith("url:"):
         from systemone_serve.backends.systemone_http import SystemOneHTTP
 
-        return SystemOneHTTP.for_spec(upstream_spec(target, target[4:])), None
+        return SystemOneHTTP.for_spec(upstream_spec(target, target[4:]), relabel=False), None
     return router.backend(target), target
 
 
@@ -74,11 +76,14 @@ def run(body: dict[str, Any], targets: list[str], router: Router) -> dict[str, A
         try:
             backend, model = resolve(target, router)
             routed = answers.Request(model or request.model, request.state, request.questions, request.extra)
-            entry["response"] = backend.evaluate(routed)
+            entry["response"] = checked(backend, routed, target)
             entry["ok"] = True
         except ServeError as error:
             entry["ok"] = False
             entry["error"] = {"code": error.code, "message": str(error)}
+        except Exception as error:  # noqa: BLE001 - one broken target never loses the others' results
+            entry["ok"] = False
+            entry["error"] = {"code": BackendFailed.code, "message": scrub(f"{target}: {describe(error)}")}
         entry["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
         results.append(entry)
     return {"results": results, "questions": summarize(request, results)}

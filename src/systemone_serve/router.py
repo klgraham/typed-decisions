@@ -7,7 +7,25 @@ from typing import Any
 from systemone_serve import answers
 from systemone_serve.backends import Backend, build
 from systemone_serve.catalog import CATALOG, ModelSpec
-from systemone_serve.errors import BackendFailed, UnknownModel
+from systemone_serve.errors import (
+    BackendFailed,
+    BackendUnavailable,
+    ServeError,
+    UnknownModel,
+    describe,
+)
+
+
+def checked(backend: Backend, request: answers.Request, name: str) -> dict[str, Any]:
+    """Run one backend and hold its answer to the contract. Every failure leaves as a ServeError, so the server
+    always answers with the error body and the CLI always exits 2-4, whatever the backend raised."""
+    try:
+        result = backend.evaluate(request)
+    except ServeError:
+        raise
+    except Exception as error:  # a backend bug or an upstream library failing in a way it did not map
+        raise BackendFailed(f"{name}: {describe(error)}") from error
+    return answers.validate(request, result, name)
 
 
 def upstream_spec(name: str, target: str) -> ModelSpec:
@@ -32,7 +50,12 @@ class Router:
                 spec = self.specs.get(model)
                 if spec is None:
                     raise UnknownModel(f"Unknown model {model!r}. Known: {', '.join(self.ids())}.")
-                self._backends[model] = build(spec)
+                try:
+                    self._backends[model] = build(spec)
+                except ServeError:
+                    raise
+                except Exception as error:
+                    raise BackendUnavailable(f"{model}: {describe(error)}") from error
             return self._backends[model]
 
     def ids(self) -> list[str]:
@@ -40,11 +63,7 @@ class Router:
 
     def evaluate(self, body: Any) -> dict[str, Any]:
         request = answers.parse(body)
-        result = self.backend(request.model).evaluate(request)
-        missing = set(request.questions) - set((result or {}).get("answers") or {})
-        if missing:
-            raise BackendFailed(f"{request.model}: no answer for {', '.join(sorted(missing))}.")
-        return result
+        return checked(self.backend(request.model), request, request.model)
 
     def models(self) -> dict[str, Any]:
         """GET /v1/models in TypeSafe's shape. Release dates are not tracked here, so they are empty strings."""

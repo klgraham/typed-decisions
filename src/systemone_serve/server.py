@@ -2,16 +2,18 @@
 
 import hmac
 import json
+import logging
 import os
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from systemone_serve.errors import ServeError
+from systemone_serve.errors import ServeError, scrub
 from systemone_serve.router import Router
 
 SERVE_KEY_ENV = "SYSTEMONE_SERVE_API_KEY"
+log = logging.getLogger("systemone_serve")
 
 
 def error_body(error: ServeError) -> dict[str, dict[str, str]]:
@@ -37,12 +39,16 @@ def create_app(router: Router, api_key: str | None = None) -> FastAPI:
             return denied
         try:
             body = json.loads(await request.body())
-        except json.JSONDecodeError as error:
-            return JSONResponse({"error": {"code": "invalid_request", "message": f"Body is not JSON: {error}"}}, status_code=422)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            return JSONResponse({"error": {"code": "invalid_request", "message": f"Body is not UTF-8 JSON: {error}"}}, status_code=422)
         try:
             return JSONResponse(await run_in_threadpool(router.evaluate, body))
         except ServeError as error:
             return JSONResponse(error_body(error), status_code=error.status)
+        except Exception as error:  # a bug in this package; the router already maps every backend failure
+            log.exception("unexpected error")
+            return JSONResponse({"error": {"code": "internal_error", "message": scrub(f"{type(error).__name__}: {error}")}},
+                                status_code=500)
 
     @app.get("/v1/models")
     async def models(request: Request) -> JSONResponse:
