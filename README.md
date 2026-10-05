@@ -145,6 +145,6 @@ uv run pytest
 ```
 
 To format code, run `uv run ruff format .`.
-GitHub Actions runs both Ruff checks, ty, and the tests that do not require live services on pull requests and pushes to `master`.
+Run these checks locally; this repository does not use GitHub Actions.
 
 The suite runs on a CPU-only machine with no weights and no keys: contract tests with fake backends, the TypeSafe SDK against a running router, the proxy with a mocked network, the adapters with fake models, `--launch` with a subprocess upstream, and the CLI. Live tests in `tests/test_live.py` skip unless their key, upstream URL, or `SYSTEMONE_LIVE_INPROCESS=1` is set. For an agent-driven check, see [skills/systemone-serve/SKILL.md](skills/systemone-serve/SKILL.md). To prove a change end to end the way a user would (real `sys1` processes, no keys, no GPU, evidence kept in `.verify-artifacts/`), use [.cursor/skills/verify-systemone-serve/SKILL.md](.cursor/skills/verify-systemone-serve/SKILL.md).
