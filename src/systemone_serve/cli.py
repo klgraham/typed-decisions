@@ -147,8 +147,8 @@ def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -
     """Serve on the sockets `_bind` already listens on. An OSError before startup is still reported as the port (2),
     though `_bind` leaves nothing for uvicorn to bind. Any other startup failure (uvicorn exits with its
     STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app failing to start: a bug, 1, with
-    uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests, and
-    stops even if the signal's `Terminated` was swallowed inside a request (see `stopped_by_exit_signals`)."""
+    uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests;
+    `stopped_by_exit_signals` requests shutdown without interrupting the event loop's callback dispatch."""
     import uvicorn
     from uvicorn.config import STARTUP_FAILURE
 

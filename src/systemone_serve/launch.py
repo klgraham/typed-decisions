@@ -3,9 +3,9 @@
 Lifecycle guarantees:
 - Each child runs in its own session (process group), and stopping signals the whole group, so the workers that
   `vllm serve` or `ollama serve` fork are stopped too. On Linux each child also gets SIGTERM if this process dies.
-- SIGTERM, SIGHUP, and SIGINT raise `Terminated` while upstreams are running, including during the readiness wait
-  and inside uvicorn (which re-raises the signal after its own graceful shutdown, and would otherwise either kill
-  the process outright or swallow KeyboardInterrupt), so cleanup always runs and the exit code is 128 + signal.
+- SIGTERM, SIGHUP, and SIGINT interrupt upstream startup with `Terminated`. While serving, they request uvicorn's
+  graceful shutdown without raising into the event loop. `Terminated` is raised after serving returns, so cleanup
+  runs and the exit code is 128 + signal.
   The first signal wins: a second one interrupts neither cleanup nor exit and does not change the code. After
   cleanup the earlier handlers come back (library callers), unless `restore_signals=False` (the CLI, which exits
   right away and keeps exit signals ignored so a late one cannot kill it raw).
@@ -224,10 +224,9 @@ def _exit_signals_raise(restore: bool = True) -> Iterator[None]:
 
     The first signal wins. The handler ignores every exit signal before raising, a copy of it that someone else
     reinstalls (uvicorn restores the handlers it found) does nothing, and exit signals stay ignored while the
-    process cleans up and exits. If code inside swallows the `Terminated` (uvicorn's lifespan task can, and asyncio
-    and uvicorn catch BaseException around socket writes and ASGI apps), it is raised again on the way out, so the
-    exit is always 128+signum and never a raw kill or a lost signal; `stopped_by_exit_signals` makes sure a way out
-    comes even then.
+    process cleans up and exits. With `stopped_by_exit_signals`, the handler requests shutdown instead of raising
+    into the event loop: an exception between dequeuing and running a task wakeup would strand that task, even
+    during cancellation. The recorded signal is raised on the way out, after serving and cleanup finish.
     With `restore` the earlier handlers come back on the way out (after the caller's cleanup); without it exit
     signals stay ignored, for a process that is about to exit.
     """
@@ -241,9 +240,11 @@ def _exit_signals_raise(restore: bool = True) -> Iterator[None]:
             return
         received.append(signum)
         _ignore_exit_signals()
-        for hook in tuple(_STOP_HOOKS):
-            hook()
-        raise Terminated(signum)
+        if _STOP_HOOKS:
+            for hook in tuple(_STOP_HOOKS):
+                hook()
+        else:
+            raise Terminated(signum)
 
     previous = {signum: signal.signal(signum, handler) for signum in EXIT_SIGNALS}
     try:
@@ -269,10 +270,9 @@ _STOP_HOOKS: list[Callable[[], None]] = []
 
 @contextmanager
 def stopped_by_exit_signals(stop: Callable[[], None]) -> Iterator[None]:
-    """While inside, the first exit signal also calls `stop` (the CLI passes one that sets uvicorn's `should_exit`).
-    The `Terminated` the handler raises lands wherever the main thread is, and if that is inside a socket write or a
-    request (asyncio and uvicorn catch BaseException there) it is swallowed, exit signals stay ignored, and nothing
-    would ever stop the server. `stop` ends the serve loop anyway, and the signal is raised again on the way out."""
+    """Defer `Terminated` while the first exit signal calls `stop` to request cooperative shutdown.
+    The CLI's hook sets uvicorn's `should_exit`; the surrounding `launched` context raises the recorded signal
+    after serving returns and upstream cleanup finishes. The signal handler must not interrupt callback dispatch."""
     _STOP_HOOKS.append(stop)
     try:
         yield
