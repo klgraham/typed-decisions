@@ -66,7 +66,7 @@ class SystemOneHTTP:
         if not url:
             raise BackendUnavailable(f"{spec.id}: no upstream URL. Set {spec.url_env}.")
         hint = f"Start it with `sys1 serve --model {spec.id} --launch`, or set {spec.url_env}."
-        return cls(spec.id, url, spec.upstream_model, key_env=spec.auth_env, hint=hint,
+        return cls(spec.id, url, spec.resolved_model(), key_env=spec.auth_env, hint=hint,
                    retry=RetryPolicy(max_retries=0), transport=transport, label=spec.id if relabel else None)
 
     def _api_key(self) -> str:

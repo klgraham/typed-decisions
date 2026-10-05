@@ -47,12 +47,23 @@ class ModelSpec:
     launch: tuple[Step, ...] = ()
     notes: str = ""
 
+    def _env(self, suffix: str) -> str:
+        return "SYSTEMONE_" + re.sub(r"[^A-Z0-9]+", "_", self.id.upper()).strip("_") + "_" + suffix
+
     @property
     def url_env(self) -> str:
-        return "SYSTEMONE_" + re.sub(r"[^A-Z0-9]+", "_", self.id.upper()).strip("_") + "_URL"
+        return self._env("URL")
+
+    @property
+    def model_env(self) -> str:
+        """The variable that overrides the name sent upstream, e.g. SYSTEMONE_KEV_4B_MODEL. Hosted Jev ignores it."""
+        return self._env("MODEL")
 
     def resolved_url(self) -> str | None:
         return os.environ.get(self.url_env, "").strip() or self.url
+
+    def resolved_model(self) -> str | None:
+        return os.environ.get(self.model_env, "").strip() or self.upstream_model
 
 
 def _jev(model: str) -> ModelSpec:
@@ -153,7 +164,8 @@ CATALOG: tuple[ModelSpec, ...] = (
         url="http://127.0.0.1:11434",
         upstream_model="tev1",
         launch=(Step(command=("ollama", "serve"), ready_path="/api/version", env={"OLLAMA_HOST": "{hostport}"}),),
-        notes="Run `ollama pull tev1` once. Ollama builds Tev1's prompt itself; inputs should stay under ~2,000 tokens.",
+        notes="Run `ollama pull tev1` once, or set SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL to the tag you pulled (e.g. "
+              "tev1:4b-q4_K_M). Ollama builds Tev1's prompt itself; inputs should stay under ~2,000 tokens.",
     ),
     ModelSpec(
         id="tev1-4b-experimental@together",
@@ -245,6 +257,14 @@ CATALOG: tuple[ModelSpec, ...] = (
 BY_ID = {spec.id: spec for spec in CATALOG}
 
 
+TOGETHER_MODEL_ENV = "TOGETHER_MODEL"  # the older, Together-only override; SYSTEMONE_<ID>_MODEL wins over it
+
+
+def together_model(spec: ModelSpec) -> str:
+    return (os.environ.get(spec.model_env, "").strip() or os.environ.get(TOGETHER_MODEL_ENV, "").strip()
+            or spec.upstream_model or "")
+
+
 def extra_installed(spec: ModelSpec) -> bool:
     return all(_module_present(name) for name in spec.probe_modules)
 
@@ -281,6 +301,9 @@ def status(spec: ModelSpec) -> dict[str, object]:
         entry["url"] = spec.resolved_url() if spec.kind != "hosted-jev" else TYPESAFE_URL
         if spec.kind == "systemone-http":
             entry["url_env"] = spec.url_env
+    if spec.kind in ("systemone-http", "tev1-together"):
+        entry["upstream_model"] = spec.resolved_model() if spec.kind == "systemone-http" else together_model(spec)
+        entry["model_env"] = spec.model_env
     if spec.auth_env:
         entry["auth_env"] = spec.auth_env
         entry["auth_env_set"] = bool(os.environ.get(spec.auth_env, "").strip())
