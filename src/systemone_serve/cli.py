@@ -1,4 +1,4 @@
-"""`systemone-serve`: list, serve, ask, compare, download. JSON on stdout; the exit code says what happened.
+"""`sys1` (the systemone-serve CLI): list, serve, ask, compare, download. JSON on stdout; the exit code says what happened.
 
 Exit codes:
   0  success
@@ -167,7 +167,7 @@ def cmd_download(args: argparse.Namespace) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="systemone-serve", description=__doc__,
+    root = argparse.ArgumentParser(prog="sys1", description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = root.add_subparsers(dest="command", required=True)
 

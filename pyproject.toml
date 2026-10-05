@@ -69,7 +69,7 @@ cua = [
 ]
 
 [project.scripts]
-systemone-serve = "systemone_serve.cli:main"
+sys1 = "systemone_serve.cli:main"
 
 [dependency-groups]
 dev = [

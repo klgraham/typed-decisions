@@ -256,7 +256,7 @@ def hardware() -> dict[str, bool]:
 
 
 def status(spec: ModelSpec) -> dict[str, object]:
-    """What `systemone-serve models` prints for one entry. Never includes a secret's value."""
+    """What `sys1 models` prints for one entry. Never includes a secret's value."""
     entry: dict[str, object] = {
         "id": spec.id,
         "kind": spec.kind,

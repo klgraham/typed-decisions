@@ -28,13 +28,13 @@ The API key comes only from the `TYPESAFE_API_KEY` environment variable. It is n
 
 ## Comparison with LLMs
 
-An LLM can approximate the same decisions by generating tokens. `systemone-serve compare` runs one question set against hosted Jev, any served decision model, and an LLM through [`system-one-adapter` 0.2.1](https://github.com/typesafe-ai/system-one-adapter-python), then lines the answers up per question.
+An LLM can approximate the same decisions by generating tokens. `sys1 compare` runs one question set against hosted Jev, any served decision model, and an LLM through [`system-one-adapter` 0.2.1](https://github.com/typesafe-ai/system-one-adapter-python), then lines the answers up per question.
 
 ## Weights
 
-This repo does not provide model weights. Download them with Hugging Face tooling (`systemone-serve download <model>`, `hf download`, or the upstream server's own first-run download) and serve them locally. Licenses differ per model. Follow each model's license.
+This repo does not provide model weights. Download them with Hugging Face tooling (`sys1 download <model>`, `hf download`, or the upstream server's own first-run download) and serve them locally. Licenses differ per model. Follow each model's license.
 
-Every Hugging Face snapshot is pinned to a commit SHA (`hf_revision` in `systemone-serve models`), because some of them contain code that runs here: Clef's `joint_schema_model.py`, Perplexity's server, OpenJev's shim, and vLLM's remote code. The SHAs are listed in [docs/serving-and-dependencies.md](docs/serving-and-dependencies.md#pinned-hugging-face-revisions).
+Every Hugging Face snapshot is pinned to a commit SHA (`hf_revision` in `sys1 models`), because some of them contain code that runs here: Clef's `joint_schema_model.py`, Perplexity's server, OpenJev's shim, and vLLM's remote code. The SHAs are listed in [docs/serving-and-dependencies.md](docs/serving-and-dependencies.md#pinned-hugging-face-revisions).
 
 ## Models
 
@@ -63,22 +63,22 @@ uv sync --extra llm-openai       # + LLM comparison (also llm-anthropic, llm-gem
 uv sync --extra kev              # + one local model: pplx | openjev | openjev-mlx | kev | clef | cua
 ```
 
-The model extras conflict with each other (Kev needs torch < 2.9, Perplexity pins 2.14.0, vLLM pulls 2.13.0), so install one per environment. A router in one environment can still forward to upstreams running in others: set the upstream's URL env var (shown by `systemone-serve models`, e.g. `SYSTEMONE_KEV_4B_URL`).
+The model extras conflict with each other (Kev needs torch < 2.9, Perplexity pins 2.14.0, vLLM pulls 2.13.0), so install one per environment. A router in one environment can still forward to upstreams running in others: set the upstream's URL env var (shown by `sys1 models`, e.g. `SYSTEMONE_KEV_4B_URL`).
 
 ## CLI
 
-Every command prints JSON on stdout. Logs and upstream output go to stderr.
+The console command is `sys1` (`python -m systemone_serve.cli` runs the same thing). Every command prints JSON on stdout. Logs and upstream output go to stderr.
 
 ```bash
-systemone-serve models                                   # every model: extra installed?, URL, auth env set?, hardware
-systemone-serve serve --port 8080                        # route to all models (127.0.0.1 by default)
-systemone-serve serve --model kev-4b --launch            # start kev.serve on :8008, then route to it
-systemone-serve ask examples/support-ticket.json         # route in this process, no server needed
-systemone-serve ask --model kev-4b < request.json        # body from stdin, model overridden
-systemone-serve ask request.json --url http://127.0.0.1:8080   # send to a running server
-systemone-serve compare examples/support-ticket.json \
+sys1 models                                         # every model: extra installed?, URL, auth env set?, hardware
+sys1 serve --port 8080                              # route to all models (127.0.0.1 by default)
+sys1 serve --model kev-4b --launch                  # start kev.serve on :8008, then route to it
+sys1 ask examples/support-ticket.json               # route in this process, no server needed
+sys1 ask --model kev-4b < request.json              # body from stdin, model overridden
+sys1 ask request.json --url http://127.0.0.1:8080   # send to a running server
+sys1 compare examples/support-ticket.json \
     -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini -t uniform-baseline
-systemone-serve download clef-flash                      # Hugging Face snapshot; prints the path
+sys1 download clef-flash                            # Hugging Face snapshot; prints the path
 ```
 
 A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range); a violation is `backend_failed`.
