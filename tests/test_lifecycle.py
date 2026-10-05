@@ -277,6 +277,37 @@ def test_ipv6_router_port_in_use_exits_2(capsys, no_uvicorn):
     assert code == 2 and "Cannot listen" in out["error"]["message"]
 
 
+def localhost_addresses() -> list[tuple[int, str]]:
+    infos = socket.getaddrinfo("localhost", 0, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
+    return list(dict.fromkeys((family, address[0]) for family, _, _, _, address in infos))
+
+
+@pytest.mark.parametrize("family, address", localhost_addresses())
+def test_localhost_exits_2_before_listening_when_any_of_its_addresses_is_taken(capsys, no_uvicorn, family, address):
+    # uvicorn binds every address localhost resolves to (::1 and 127.0.0.1 here), so the check must test them all.
+    with socket.create_server((address, 0), family=family) as stale:
+        code, out = run(capsys, "serve", "--host", "localhost", "--port", str(stale.getsockname()[1]))
+    assert code == 2 and "Cannot listen" in out["error"]["message"]
+    assert no_uvicorn == []
+
+
+def test_a_port_taken_after_the_check_is_exit_2_not_uvicorns_3(capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_check_bindable", lambda host, port: None)  # lose the race on purpose
+    stale = HTTPServer(("127.0.0.1", 0), Stale)
+    try:
+        code = cli.main(["serve", "--port", str(stale.server_address[1])])
+    finally:
+        stale.server_close()
+    decoder, text, events = json.JSONDecoder(), capsys.readouterr().out, []
+    while text.strip():
+        event, end = decoder.raw_decode(text.lstrip())
+        events.append(event)
+        text = text.lstrip()[end:]
+    assert code == 2
+    assert events[0]["event"] == "listening" and events[-1]["error"]["code"] == "invalid_request"
+    assert "Cannot listen" in events[-1]["error"]["message"]
+
+
 def test_router_port_in_use_exits_2_before_any_success_event(capsys, no_uvicorn):
     stale = HTTPServer(("127.0.0.1", 0), Stale)
     try:
