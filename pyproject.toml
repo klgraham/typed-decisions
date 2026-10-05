@@ -58,7 +58,7 @@ kev = [
 ]
 clef = [
     # Cloudflare/clef and clef-flash: joint_schema_model.py, tested with torch 2.11 and transformers 5.10.2
-    "torch>=2.11",
+    "torch>=2.11,<2.12",
     "transformers>=5.10.2,<6",
     "safetensors",
     "pillow",

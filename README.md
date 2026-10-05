@@ -34,6 +34,8 @@ An LLM can approximate the same decisions by generating tokens. `systemone-serve
 
 This repo does not provide model weights. Download them with Hugging Face tooling (`systemone-serve download <model>`, `hf download`, or the upstream server's own first-run download) and serve them locally. Licenses differ per model. Follow each model's license.
 
+Every Hugging Face snapshot is pinned to a commit SHA (`hf_revision` in `systemone-serve models`), because some of them contain code that runs here: Clef's `joint_schema_model.py`, Perplexity's server, OpenJev's shim, and vLLM's remote code. The SHAs are listed in [docs/serving-and-dependencies.md](docs/serving-and-dependencies.md#pinned-hugging-face-revisions).
+
 ## Models
 
 | id | Model | License | Stack | Hardware | Extra |
@@ -69,7 +71,7 @@ Every command prints JSON on stdout. Logs and upstream output go to stderr.
 
 ```bash
 systemone-serve models                                   # every model: extra installed?, URL, auth env set?, hardware
-systemone-serve serve --port 8080                        # route to all models
+systemone-serve serve --port 8080                        # route to all models (127.0.0.1 by default)
 systemone-serve serve --model kev-4b --launch            # start kev.serve on :8008, then route to it
 systemone-serve ask examples/support-ticket.json         # route in this process, no server needed
 systemone-serve ask --model kev-4b < request.json        # body from stdin, model overridden
@@ -79,7 +81,13 @@ systemone-serve compare examples/support-ticket.json \
 systemone-serve download clef-flash                      # Hugging Face snapshot; prints the path
 ```
 
-`compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`.
+A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range); a violation is `backend_failed`.
+
+`serve --launch` runs each upstream in its own process group with only the keys it needs (its own auth variable and `HF_TOKEN`). SIGTERM, SIGHUP, or Ctrl-C stops the whole group before exit, including during the readiness wait. A port that is already taken fails the launch instead of being mistaken for the new upstream.
+
+`serve` refuses a non-loopback `--host` unless `SYSTEMONE_SERVE_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
+
+`compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`. NAME cannot be a catalog id (set that model's `SYSTEMONE_<ID>_URL` instead), and URL cannot be the router itself.
 
 Example `compare` output (trimmed):
 
@@ -101,20 +109,21 @@ Example `compare` output (trimmed):
 | Code | Meaning | HTTP status from `serve` |
 | --- | --- | --- |
 | 0 | success | 200 |
-| 1 | unexpected error (bug) | 500 |
-| 2 | invalid input: arguments, JSON, question shape, unknown model | 422 / 404 |
-| 3 | backend unavailable: missing extra, hardware, API key, or a stopped upstream | 503 |
-| 4 | backend failed: upstream error or an answer outside the contract | 502 |
+| 1 | unexpected error (bug; traceback on stderr) | 500 |
+| 2 | invalid input: arguments, JSON, question shape, unknown model, port in use, unauthenticated non-loopback `--host` | 422 / 404 |
+| 3 | backend unavailable: missing extra, hardware, an API key unset or rejected (401/403), or a stopped upstream | 503 |
+| 4 | backend failed: upstream or model error, or an answer outside the contract | 502 |
 | 5 | `compare` only: at least one target failed (details in the JSON) | n/a |
+| 129 / 130 / 143 | `serve` stopped by SIGHUP / SIGINT / SIGTERM, after stopping launched upstreams | n/a |
 
-Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the same body.
+Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the same body for every failure. Messages are scrubbed of the values of the key variables below, in case an upstream echoes one.
 
 ### Environment
 
 | Variable | Used for |
 | --- | --- |
 | `TYPESAFE_API_KEY` | hosted Jev, and nothing else |
-| `SYSTEMONE_SERVE_API_KEY` | optional Bearer key this server requires; unset means open (bind to 127.0.0.1) |
+| `SYSTEMONE_SERVE_API_KEY` | optional Bearer key this server requires; unset means open, which `serve` allows only on loopback unless `--allow-unauthenticated` |
 | `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL` |
 | `KEV_API_KEY`, `AUTOJEV_API_KEY`, `SHIM_TOKEN` | Bearer keys the Kev, Perplexity, and OpenJev upstreams check; forwarded when set |
 | `TOGETHER_API_KEY`, `TOGETHER_MODEL` | `tev1-4b-experimental@together` (default model `together/Tev1-4B-experimental`) |

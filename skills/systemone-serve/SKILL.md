@@ -5,7 +5,7 @@ description: Use and verify systemone-serve, the System One router for decision 
 
 # systemone-serve
 
-Every command prints JSON on stdout and exits with a meaningful code: 0 ok, 2 bad input, 3 backend unavailable (extra, hardware, key, or upstream missing), 4 backend failed, 5 some `compare` targets failed. Read `error.code` and `error.message` before retrying; exit 3 is fixed by setup, not by retrying.
+Every command prints JSON on stdout and exits with a meaningful code: 0 ok, 1 bug, 2 bad input, 3 backend unavailable (extra, hardware, key unset or rejected, or upstream missing), 4 backend failed (including an answer outside the contract), 5 some `compare` targets failed, 129/130/143 `serve` stopped by a signal after stopping its upstreams. Read `error.code` and `error.message` before retrying; exit 3 is fixed by setup, not by retrying.
 
 ## Verify the repo (no GPU, no keys)
 
@@ -23,7 +23,7 @@ Report each step's exit code and the pytest pass/skip counts.
 
 1. `systemone-serve models` and read the entry: `extra_installed`, `url`, `url_env`, `auth_env_set`, `launchable`, `hardware`.
 2. If `extra_installed` is false, `uv sync --extra <extra>` (one model extra per environment).
-3. Upstream models (`kind: systemone-http`): either `systemone-serve serve --model <id> --launch`, or run the upstream yourself and set its `url_env`.
+3. Upstream models (`kind: systemone-http`): either `systemone-serve serve --model <id> --launch`, or run the upstream yourself and set its `url_env`. Stop a launched server with SIGTERM or Ctrl-C; it stops its upstreams first. Never pass `--host 0.0.0.0` without `SYSTEMONE_SERVE_API_KEY`.
 4. `systemone-serve ask <request.json> --model <id>`.
 
 Hosted Jev needs `TYPESAFE_API_KEY` in the environment. Never write the key to a file or print it.
