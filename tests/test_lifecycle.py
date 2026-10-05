@@ -3,6 +3,7 @@
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import textwrap
@@ -104,6 +105,29 @@ def test_signal_while_serving_stops_the_whole_upstream_group(fake_ollama, signum
         assert alive(upstream) and alive(worker)
         process.send_signal(signum)
         assert process.wait(timeout=40) == code
+        wait_for(lambda: not alive(upstream) and not alive(worker), timeout=10)
+    finally:
+        process.kill()
+
+
+@linux_only
+@pytest.mark.parametrize("never_ready", [False, True])
+@pytest.mark.parametrize("first, gap, codes", [(signal.SIGTERM, 0.0, {143}), (signal.SIGTERM, 0.005, {143}),
+                                               (signal.SIGHUP, 0.0, {129, 143}), (signal.SIGHUP, 0.005, {129})])
+def test_a_second_signal_keeps_the_exit_code_and_cleanup(fake_ollama, never_ready, first, gap, codes):
+    # SIGHUP while serving is the case uvicorn swallowed, which lost the signal and let SIGTERM kill us raw. Two
+    # signals sent back to back may be handled in either order, so a gap of 0 accepts either signal's code.
+    process, port = serve(fake_ollama, never_ready=never_ready)
+    try:
+        if never_ready:
+            time.sleep(0.5)
+        else:
+            wait_for(lambda: router_up(port))
+        upstream, worker = map(int, fake_ollama[1].read_text().split())
+        process.send_signal(first)
+        time.sleep(gap)
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=40) in codes
         wait_for(lambda: not alive(upstream) and not alive(worker), timeout=10)
     finally:
         process.kill()
@@ -220,6 +244,37 @@ def test_non_loopback_bind_with_key_or_explicit_flag(capsys, monkeypatch, no_uvi
     code, out = run(capsys, "serve", "--port", str(free_port()))
     assert code == 0 and out["exposed"] is False
     assert len(no_uvicorn) == 3
+
+
+def ipv6_available() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6) as probe:
+            probe.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(not ipv6_available(), reason="no IPv6 loopback here")
+def test_ipv6_loopback_is_loopback_and_ipv6_any_is_not(capsys, monkeypatch, no_uvicorn):
+    port = free_port()
+    code, out = run(capsys, "serve", "--host", "::1", "--port", str(port))
+    assert code == 0 and (out["exposed"], out["url"]) == (False, f"http://[::1]:{port}")
+    code, out = run(capsys, "serve", "--host", "::", "--port", str(free_port()))
+    assert code == 2 and "SYSTEMONE_SERVE_API_KEY" in out["error"]["message"]
+    code, out = run(capsys, "serve", "--host", "::", "--port", str(free_port()), "--allow-unauthenticated")
+    assert code == 0 and (out["auth"], out["exposed"]) == (False, True)
+    monkeypatch.setenv("SYSTEMONE_SERVE_API_KEY", "a-long-serve-key")
+    code, out = run(capsys, "serve", "--host", "::", "--port", str(free_port()))
+    assert code == 0 and (out["auth"], out["exposed"]) == (True, True)
+    assert [call["host"] for call in no_uvicorn] == ["::1", "::", "::"]
+
+
+@pytest.mark.skipif(not ipv6_available(), reason="no IPv6 loopback here")
+def test_ipv6_router_port_in_use_exits_2(capsys, no_uvicorn):
+    with socket.create_server(("::1", 0), family=socket.AF_INET6) as stale:
+        code, out = run(capsys, "serve", "--host", "::1", "--port", str(stale.getsockname()[1]))
+    assert code == 2 and "Cannot listen" in out["error"]["message"]
 
 
 def test_router_port_in_use_exits_2_before_any_success_event(capsys, no_uvicorn):
