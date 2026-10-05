@@ -2,7 +2,7 @@
 
 Exit codes:
   0  success
-  1  unexpected error (a bug; the message is on stderr)
+  1  unexpected error (a bug, such as serve failing to start for a reason other than its port; see stderr)
   2  invalid input: bad arguments, unreadable or invalid JSON, unknown model, a port that cannot be listened on
   3  backend unavailable: missing extra, hardware, API key, or a stopped upstream
   4  backend failed: the model or upstream returned an error or an off-contract answer
@@ -109,9 +109,10 @@ def _same_address(url: str, host: str, port: int) -> bool:
     return target == host or (is_loopback(target) and (is_loopback(host) or host in ("0.0.0.0", "::")))
 
 
-def _check_bindable(host: str, port: int) -> None:
-    """Bind every address uvicorn will, all at once, the way asyncio's `create_server` does: each `getaddrinfo` result
-    (`localhost` is usually `::1` and `127.0.0.1`), SO_REUSEADDR, and IPV6_V6ONLY on IPv6 sockets."""
+def _bind(host: str, port: int) -> list[socket.socket]:
+    """Bind every address uvicorn would, all at once, the way asyncio's `create_server` does: each `getaddrinfo` result
+    (`localhost` is usually `::1` and `127.0.0.1`), SO_REUSEADDR, and IPV6_V6ONLY on IPv6 sockets. uvicorn serves on
+    these sockets, so the port is held from this check on; it starts listening only when uvicorn starts."""
     sockets: list[socket.socket] = []
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)
@@ -123,25 +124,36 @@ def _check_bindable(host: str, port: int) -> None:
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             sock.bind(address)
     except OSError as error:  # socket.gaierror included
+        _close(sockets)
         raise InvalidRequest(f"Cannot listen on {host}:{port}: {error.strerror or error}.") from error
-    finally:
-        for sock in sockets:
-            sock.close()
+    return sockets
 
 
-def _run_uvicorn(app: Any, host: str, port: int) -> None:
-    """uvicorn exits with its STARTUP_FAILURE (3) when it cannot bind, which would read as sys1's 3 (backend
-    unavailable). A port taken between the check and uvicorn's own bind is invalid input (2), like any port in use."""
+def _close(sockets: list[socket.socket]) -> None:
+    for sock in sockets:
+        sock.close()
+
+
+def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -> None:
+    """Serve on the sockets `_bind` holds, so the only address failure left is listen() being refused (another
+    SO_REUSEADDR socket bound the port and listened first): invalid input (2), like any port in use. Any other startup
+    failure (uvicorn exits with its STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app
+    failing to start: a bug, 1, with uvicorn's reason on stderr."""
     import uvicorn
     from uvicorn.config import STARTUP_FAILURE
 
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
     try:
-        uvicorn.run(app, host=host, port=port, log_level="warning")
+        server.run(sockets=sockets)
+    except OSError as error:
+        if server.started:
+            raise
+        raise InvalidRequest(f"Cannot listen on {host}:{port}: {error.strerror or error}.") from error
     except SystemExit as stopped:
         if stopped.code != STARTUP_FAILURE:
             raise
-        raise InvalidRequest(f"Cannot listen on {host}:{port}: the server could not start (the reason is on "
-                             "stderr; another process may have taken the port after the check).") from stopped
+        raise ServeError(f"The server on {host}:{port} failed to start, though its port was free (the reason is on "
+                         "stderr).") from stopped
 
 
 def _url(host: str, port: int) -> str:
@@ -163,22 +175,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
     for item in args.upstream:
         if _same_address(item.partition("=")[2], args.host, args.port):
             raise InvalidRequest(f"--upstream {item} points at this server itself.")
-    _check_bindable(args.host, args.port)
-
-    router = build_router(args.upstream)
-    if args.model:
-        unknown = [model for model in args.model if model not in router.specs]
-        if unknown:
-            raise UnknownModel(f"Unknown model(s): {', '.join(unknown)}.")
-        router = Router([router.specs[model] for model in args.model])
-    to_launch = [router.specs[model] for model in (args.model or [])] if args.launch else []
-    if args.launch and not to_launch:
-        raise InvalidRequest("--launch needs at least one --model.")
-    with launched(to_launch, timeout=args.launch_timeout, restore_signals=False) as started:
-        emit({"event": "listening", "url": _url(args.host, args.port), "models": router.ids(),
-              "launched": started, "auth": authenticated, "exposed": exposed})
-        sys.stdout.flush()
-        _run_uvicorn(create_app(router), args.host, args.port)
+    sockets = _bind(args.host, args.port)
+    try:
+        router = build_router(args.upstream)
+        if args.model:
+            unknown = [model for model in args.model if model not in router.specs]
+            if unknown:
+                raise UnknownModel(f"Unknown model(s): {', '.join(unknown)}.")
+            router = Router([router.specs[model] for model in args.model])
+        to_launch = [router.specs[model] for model in (args.model or [])] if args.launch else []
+        if args.launch and not to_launch:
+            raise InvalidRequest("--launch needs at least one --model.")
+        with launched(to_launch, timeout=args.launch_timeout, restore_signals=False) as started:
+            emit({"event": "listening", "url": _url(args.host, args.port), "models": router.ids(),
+                  "launched": started, "auth": authenticated, "exposed": exposed})
+            sys.stdout.flush()
+            _run_uvicorn(create_app(router), args.host, args.port, sockets)
+    finally:
+        _close(sockets)
     return 0
 
 

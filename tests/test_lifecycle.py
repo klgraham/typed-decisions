@@ -1,5 +1,6 @@
 """`serve --launch` lifecycle: signals never orphan upstreams, ports are checked, children get only their keys."""
 
+import errno
 import json
 import os
 import signal
@@ -220,7 +221,13 @@ def no_uvicorn(monkeypatch):
     import uvicorn
 
     calls = []
-    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: calls.append(kwargs))
+
+    def run(server, sockets=None):
+        calls.append({"host": server.config.host, "port": server.config.port,
+                      "bound": [sock.getsockname()[1] for sock in sockets or []]})
+        server.started = True
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
     return calls
 
 
@@ -291,21 +298,71 @@ def test_localhost_exits_2_before_listening_when_any_of_its_addresses_is_taken(c
     assert no_uvicorn == []
 
 
-def test_a_port_taken_after_the_check_is_exit_2_not_uvicorns_3(capsys, monkeypatch):
-    monkeypatch.setattr(cli, "_check_bindable", lambda host, port: None)  # lose the race on purpose
-    stale = HTTPServer(("127.0.0.1", 0), Stale)
-    try:
-        code = cli.main(["serve", "--port", str(stale.server_address[1])])
-    finally:
-        stale.server_close()
-    decoder, text, events = json.JSONDecoder(), capsys.readouterr().out, []
+def events(text: str) -> list[dict]:
+    decoder, found = json.JSONDecoder(), []
     while text.strip():
         event, end = decoder.raw_decode(text.lstrip())
-        events.append(event)
+        found.append(event)
         text = text.lstrip()[end:]
+    return found
+
+
+def test_the_router_port_is_held_from_the_check_until_uvicorn_serves_it(capsys, monkeypatch):
+    import uvicorn
+
+    port, squatter = free_port(), []
+
+    def run(server, sockets=None):  # what a process starting between the check and uvicorn would get
+        with socket.socket() as late:
+            try:
+                late.bind(("127.0.0.1", port))
+            except OSError as error:
+                squatter.append(error.errno)
+        server.started = True
+        assert [sock.getsockname() for sock in sockets] == [("127.0.0.1", port)]
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    assert cli.main(["serve", "--port", str(port)]) == 0
+    assert squatter == [errno.EADDRINUSE]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux SO_REUSEADDR semantics")
+def test_a_listener_that_gets_in_first_is_exit_2_not_uvicorns_3(capsys, monkeypatch):
+    # Linux lets two SO_REUSEADDR sockets bind one port until either listens; one that listens first wins the port.
+    squatter = socket.socket()
+    bind = cli._bind
+
+    def bind_then_lose_the_port(host, port):
+        sockets = bind(host, port)
+        squatter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        squatter.bind((host, port))
+        squatter.listen()
+        return sockets
+
+    monkeypatch.setattr(cli, "_bind", bind_then_lose_the_port)
+    try:
+        code = cli.main(["serve", "--port", str(free_port())])
+    finally:
+        squatter.close()
+    found = events(capsys.readouterr().out)
     assert code == 2
-    assert events[0]["event"] == "listening" and events[-1]["error"]["code"] == "invalid_request"
-    assert "Cannot listen" in events[-1]["error"]["message"]
+    assert found[0]["event"] == "listening" and found[-1]["error"]["code"] == "invalid_request"
+    assert "Cannot listen" in found[-1]["error"]["message"]
+
+
+def test_a_startup_failure_that_is_not_the_port_is_exit_1_not_cannot_listen(capsys, monkeypatch):
+    from systemone_serve import server
+
+    async def fails_to_start(scope, receive, send):
+        assert scope["type"] == "lifespan"
+        await receive()
+        await send({"type": "lifespan.startup.failed", "message": "boom"})
+
+    monkeypatch.setattr(server, "create_app", lambda router: fails_to_start)
+    code = cli.main(["serve", "--port", str(free_port())])
+    error = events(capsys.readouterr().out)[-1]["error"]
+    assert (code, error["code"]) == (1, "internal_error")
+    assert "failed to start, though its port was free" in error["message"] and "Cannot listen" not in error["message"]
 
 
 def test_router_port_in_use_exits_2_before_any_success_event(capsys, no_uvicorn):
