@@ -23,7 +23,7 @@ Report each step's exit code and the pytest pass/skip counts.
 
 1. `sys1 models` and read the entry: `extra_installed`, `url`, `url_env`, `auth_env_set`, `launchable`, `hardware`.
 2. If `extra_installed` is false, `uv sync --extra <extra>` (one model extra per environment).
-3. Upstream models (`kind: systemone-http`): either `sys1 serve --model <id> --launch`, or run the upstream yourself and set its `url_env`. Stop a launched server with SIGTERM or Ctrl-C; it stops its upstreams first. Never pass `--host 0.0.0.0` without `SYSTEMONE_SERVE_API_KEY`.
+3. Upstream models (`kind: systemone-http`): either `sys1 serve --model <id> --launch`, or run the upstream yourself and set its `url_env` (and its `model_env` if it serves the model under another name, e.g. an Ollama tag like `tev1:4b-q4_K_M`). Stop a launched server with SIGTERM or Ctrl-C; it stops its upstreams first. Never pass `--host 0.0.0.0` without `SYSTEMONE_SERVE_API_KEY`.
 4. `sys1 ask <request.json> --model <id>`.
 
 Hosted Jev needs `TYPESAFE_API_KEY` in the environment. Never write the key to a file or print it.
