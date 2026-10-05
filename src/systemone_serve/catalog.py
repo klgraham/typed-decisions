@@ -14,14 +14,19 @@ TYPESAFE_URL = "https://api.typesafe.ai"
 
 @dataclass(frozen=True)
 class Step:
-    """One upstream process `serve --launch` starts. `{python}`, `{snapshot}`, `{revision}`, and `{port}` are filled in.
+    """One upstream process `serve --launch` starts. `{python}`, `{snapshot}`, `{revision}`, `{port}`, `{host}`, and
+    `{hostport}` (`127.0.0.1:8008` or `[::1]:8008`) are filled in.
 
-    `{snapshot}` is the Hugging Face snapshot at the spec's pinned `hf_revision`."""
+    `{snapshot}` is the Hugging Face snapshot at the spec's pinned `hf_revision`. `{host}` is the URL's loopback host;
+    a step that does not use `{host}` or `{hostport}` can only be launched on 127.0.0.1, and one with `ipv6=False`
+    (it can only listen on IPv4) is refused for an IPv6 URL. A step with its own `port` is a helper and stays on
+    127.0.0.1."""
 
     command: tuple[str, ...]
     ready_path: str
     env: dict[str, str] = field(default_factory=dict)
     port: int | None = None
+    ipv6: bool = True
 
 
 @dataclass(frozen=True)
@@ -87,7 +92,8 @@ CATALOG: tuple[ModelSpec, ...] = (
             Step(
                 command=("{python}", "-m", "autojev.server"),
                 ready_path="/v1/models",
-                env={"PYTHONPATH": "{snapshot}/source/src", "AUTOJEV_CHECKPOINT": "{snapshot}", "PORT": "{port}"},
+                env={"PYTHONPATH": "{snapshot}/source/src", "AUTOJEV_CHECKPOINT": "{snapshot}", "PORT": "{port}",
+                     "AUTOJEV_HOST": "{host}"},
             ),
         ),
     ),
@@ -118,8 +124,9 @@ CATALOG: tuple[ModelSpec, ...] = (
                 port=8100,
             ),
             Step(
-                command=("{python}", "{snapshot}/helper/shim.py", "--host", "127.0.0.1", "--port", "{port}"),
+                command=("{python}", "{snapshot}/helper/shim.py", "--host", "{host}", "--port", "{port}"),
                 ready_path="/v1/version",
+                ipv6=False,  # the shim's ThreadingHTTPServer is IPv4-only
                 env={
                     "VLLM": "http://127.0.0.1:8100/v1",
                     "TOKENIZER": "{snapshot}",
@@ -145,7 +152,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         hardware="Whatever Ollama runs on: CPU, CUDA, or Apple silicon",
         url="http://127.0.0.1:11434",
         upstream_model="tev1",
-        launch=(Step(command=("ollama", "serve"), ready_path="/api/version", env={"OLLAMA_HOST": "127.0.0.1:{port}"}),),
+        launch=(Step(command=("ollama", "serve"), ready_path="/api/version", env={"OLLAMA_HOST": "{hostport}"}),),
         notes="Run `ollama pull tev1` once. Ollama builds Tev1's prompt itself; inputs should stay under ~2,000 tokens.",
     ),
     ModelSpec(
@@ -191,7 +198,8 @@ CATALOG: tuple[ModelSpec, ...] = (
         auth_env="KEV_API_KEY",
         launch=(
             Step(
-                command=("{python}", "-m", "kev.serve", "--run", "jaredpalmer/kev-4b@{revision}", "--port", "{port}"),
+                command=("{python}", "-m", "kev.serve", "--run", "jaredpalmer/kev-4b@{revision}", "--host", "{host}",
+                         "--port", "{port}"),
                 ready_path="/v1/models",
             ),
         ),

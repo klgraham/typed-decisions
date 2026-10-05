@@ -6,11 +6,20 @@ Lifecycle guarantees:
 - SIGTERM, SIGHUP, and SIGINT raise `Terminated` while upstreams are running, including during the readiness wait
   and inside uvicorn (which re-raises the signal after its own graceful shutdown, and would otherwise either kill
   the process outright or swallow KeyboardInterrupt), so cleanup always runs and the exit code is 128 + signal.
-  The first signal wins: a second one interrupts neither cleanup nor exit and does not change the code.
+  The first signal wins: a second one interrupts neither cleanup nor exit and does not change the code. After
+  cleanup the earlier handlers come back (library callers), unless `restore_signals=False` (the CLI, which exits
+  right away and keeps exit signals ignored so a late one cannot kill it raw).
+- Each upstream listens on its URL's host (`127.0.0.1`, another 127.x address, or `::1`; `localhost` means
+  `127.0.0.1`): the port check, the readiness probe, and the child's own bind all use it. An upstream that cannot
+  be told its host, or cannot listen on IPv6, is refused for such a URL instead of being reported ready.
+- Not covered: if this process is SIGKILLed (or OOM-killed), no cleanup runs. On Linux the direct child still
+  gets SIGTERM (PR_SET_PDEATHSIG), but processes it started do not, so a grandchild can survive unless the
+  upstream stops its own workers (`ollama serve` does). Elsewhere the children themselves survive.
 - A port that is already taken fails the launch instead of letting a stale server pass the readiness check, and a
   child must still be alive after it first answers.
 """
 
+import errno
 import os
 import signal
 import socket
@@ -53,25 +62,61 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def port_of(spec: ModelSpec) -> int:
+LOCAL_HOST = "127.0.0.1"  # where launched upstreams listen unless their URL names another loopback address
+
+
+def launch_address(spec: ModelSpec) -> tuple[str, int]:
+    """The loopback host and port from the spec's URL that `--launch` starts its upstream on."""
     url = spec.resolved_url()
     parsed = urlparse(url) if url else None
     if parsed is None or parsed.port is None:
         raise BackendUnavailable(f"{spec.id}: its URL has no port to launch on.")
-    if not is_loopback(parsed.hostname or ""):
-        raise BackendUnavailable(f"{spec.id}: {spec.url_env} points at {parsed.hostname}, and --launch only starts "
+    host = parsed.hostname or ""
+    if not is_loopback(host):
+        raise BackendUnavailable(f"{spec.id}: {spec.url_env} points at {host}, and --launch only starts "
                                  f"local upstreams. Drop --launch, or unset {spec.url_env}.")
-    return parsed.port
+    return (LOCAL_HOST if host == "localhost" else host), parsed.port
 
 
-def ensure_free(port: int, owner: str, hint: str = "") -> None:
-    """Fail if anything already listens on 127.0.0.1:port (EADDRINUSE), rather than mistaking it for our child."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # ignore TIME_WAIT leftovers, not listeners
-        try:
-            probe.bind(("127.0.0.1", port))
-        except OSError as error:
+def port_of(spec: ModelSpec) -> int:
+    return launch_address(spec)[1]
+
+
+def netloc(host: str, port: int) -> str:
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def _takes_host(step: Step) -> bool:
+    return any("{host}" in text or "{hostport}" in text for text in (*step.command, *step.env.values()))
+
+
+def check_launchable(spec: ModelSpec, host: str, port: int) -> None:
+    """Refuse a URL host the upstream cannot listen on, before anything starts, instead of probing the wrong address."""
+    for step in spec.launch:
+        if (step.port or port) != port or host == LOCAL_HOST:
+            continue
+        program = step.command[0] if step.command else spec.id
+        fix = f"Set {spec.url_env} to http://{LOCAL_HOST}:{port}, or start the upstream yourself and drop --launch."
+        if not _takes_host(step):
+            raise BackendUnavailable(f"{spec.id}: {program} cannot be told to listen on {host}, only on {LOCAL_HOST}. {fix}")
+        if ":" in host and not step.ipv6:
+            raise BackendUnavailable(f"{spec.id}: {program} listens on IPv4 only, so it cannot serve "
+                                     f"http://{netloc(host, port)}. {fix}")
+
+
+def ensure_free(host: str, port: int, owner: str, hint: str = "") -> None:
+    """Fail if anything already listens on host:port (EADDRINUSE), rather than mistaking it for our child, or if
+    this machine cannot listen there at all (an IPv6 address with IPv6 disabled)."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # ignore TIME_WAIT leftovers, not listeners
+            probe.bind((host, port))
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
             raise BackendUnavailable(f"{owner}: port {port} is already in use ({error.strerror}). {hint}".strip()) from error
+        raise BackendUnavailable(f"{owner}: cannot listen on {netloc(host, port)} ({error.strerror or error}). "
+                                 f"Use a {LOCAL_HOST} URL instead.") from error
 
 
 def render_step(step: Step, values: dict[str, str]) -> tuple[list[str], dict[str, str]]:
@@ -165,13 +210,15 @@ def wait_ready(url: str, process: subprocess.Popen[bytes], timeout: float, auth_
 
 
 @contextmanager
-def _exit_signals_raise() -> Iterator[None]:
+def _exit_signals_raise(restore: bool = True) -> Iterator[None]:
     """Turn SIGTERM/SIGHUP/SIGINT into `Terminated` for the duration (main thread only; signals are main-thread only).
 
     The first signal wins. The handler ignores every exit signal before raising, a copy of it that someone else
     reinstalls (uvicorn restores the handlers it found) does nothing, and exit signals stay ignored while the
     process cleans up and exits. If code inside swallows the `Terminated` (uvicorn's lifespan task can), it is
     raised again on the way out, so the exit is always 128+signum and never a raw kill or a lost signal.
+    With `restore` the earlier handlers come back on the way out (after the caller's cleanup); without it exit
+    signals stay ignored, for a process that is about to exit.
     """
     if threading.current_thread() is not threading.main_thread():
         yield
@@ -192,16 +239,23 @@ def _exit_signals_raise() -> Iterator[None]:
         if not received:
             _restore(previous)
             raise
-        # Ignore again on the way out: uvicorn may have reinstalled `handler`, and interpreter shutdown resets Python
-        # handlers (not SIG_IGN) to the default action, so a late second signal would otherwise kill us raw.
-        _ignore_exit_signals()
+        # Without `restore`, ignore again on the way out: uvicorn may have reinstalled `handler`, and interpreter
+        # shutdown resets Python handlers (not SIG_IGN) to the default action, so a late signal would kill us raw.
+        _leave(previous, restore)
         if isinstance(error, Terminated):
             raise
         raise Terminated(received[0]) from error
     if received:
-        _ignore_exit_signals()
+        _leave(previous, restore)
         raise Terminated(received[0])
     _restore(previous)
+
+
+def _leave(previous: dict[int, Any], restore: bool) -> None:
+    if restore:
+        _restore(previous)
+    else:
+        _ignore_exit_signals()
 
 
 def _ignore_exit_signals() -> None:
@@ -229,29 +283,36 @@ def _signals_ignored() -> Iterator[None]:
 
 
 @contextmanager
-def launched(specs: list[ModelSpec], timeout: float = 1800.0) -> Iterator[list[str]]:
-    """Run every launch step of every spec in order; child output goes to stderr so stdout stays JSON."""
+def launched(specs: list[ModelSpec], timeout: float = 1800.0, restore_signals: bool = True) -> Iterator[list[str]]:
+    """Run every launch step of every spec in order; child output goes to stderr so stdout stays JSON.
+
+    A signal raises `Terminated` after every child is stopped. Exit signals are ignored from the first signal until
+    then; afterwards the earlier handlers are restored, or, with `restore_signals=False`, stay ignored."""
     processes: list[subprocess.Popen[bytes]] = []
     started: list[str] = []
-    with _exit_signals_raise():
+    with _exit_signals_raise(restore_signals):
         try:
             for spec in specs:
                 if not spec.launch:
                     raise BackendUnavailable(f"{spec.id} has nothing to launch; it runs in process or is hosted.")
-                port = port_of(spec)
-                values = {"python": sys.executable, "port": str(port), "revision": spec.hf_revision or "main",
+                check_launchable(spec, *launch_address(spec))
+            for spec in specs:
+                host, port = launch_address(spec)
+                values = {"python": sys.executable, "port": str(port), "host": host, "hostport": netloc(host, port),
+                          "revision": spec.hf_revision or "main",
                           "snapshot": snapshot(spec.hf_repo, spec.hf_revision) if spec.hf_repo and _needs_snapshot(spec) else ""}
                 for step in spec.launch:
                     step_port = step.port or port
-                    ensure_free(step_port, spec.id, f"Stop that process, or run the upstream yourself and set {spec.url_env}."
-                                if step_port == port else "Stop that process first.")
+                    step_host = host if step_port == port else LOCAL_HOST  # helper processes on fixed ports stay local
+                    ensure_free(step_host, step_port, spec.id, f"Stop that process, or run the upstream yourself and set "
+                                f"{spec.url_env}." if step_port == port else "Stop that process first.")
                     command, env = render_step(step, values)
                     try:
                         process = start(command, child_env(spec, env))
                     except FileNotFoundError as error:
                         raise BackendUnavailable(f"{spec.id}: {command[0]} is not installed or not on PATH.") from error
                     processes.append(process)
-                    wait_ready(f"http://127.0.0.1:{step_port}{step.ready_path}", process, timeout, spec.auth_env)
+                    wait_ready(f"http://{netloc(step_host, step_port)}{step.ready_path}", process, timeout, spec.auth_env)
                 started.append(spec.id)
             yield started
         finally:
