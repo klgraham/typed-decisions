@@ -1,14 +1,99 @@
 [project]
 name = "systemone-serve"
 version = "0.1.0"
-description = "Add your description here"
+description = "Serve decision models on the TypeSafe System One routes"
 readme = "README.md"
 authors = [
     { name = "Ken Graham", email = "851943+klgraham@users.noreply.github.com" }
 ]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "typesafe-sdk==0.7.2",
+    "system-one-adapter==0.2.1",
+]
+
+[project.optional-dependencies]
+pplx = [
+    "torch==2.14.0 ; python_version >= '3.12'",
+    "torchvision==0.29.0 ; python_version >= '3.12'",
+    "transformers==5.17.0 ; python_version >= '3.12'",
+    "accelerate==1.15.0 ; python_version >= '3.12'",
+    "huggingface-hub==1.31.0 ; python_version >= '3.12'",
+    "pillow==12.3.0 ; python_version >= '3.12'",
+    "safetensors==0.8.0 ; python_version >= '3.12'",
+    "fastapi==0.141.1 ; python_version >= '3.12'",
+    "uvicorn==0.52.4 ; python_version >= '3.12'",
+]
+openjev = [
+    "vllm==0.29.0 ; python_version >= '3.12'",
+    "openai==3.16.2 ; python_version >= '3.12'",
+    "httpx==0.28.1 ; python_version >= '3.12'",
+    "torch==2.13.0 ; python_version >= '3.12'",
+    "transformers==5.17.0 ; python_version >= '3.12'",
+    "huggingface-hub ; python_version >= '3.12'",
+]
+openjev-mlx = [
+    "mlx==0.32.2 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm==0.31.3 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "transformers==5.17.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "openai==3.16.2 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "huggingface-hub==1.32.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+tev = [
+    "together==2.23.0 ; python_version >= '3.12'",
+]
+cua = [
+    "cua-s1[four-b] @ git+https://github.com/trycua/cua.git#subdirectory=libs/cua-s1/python ; python_version >= '3.11' and python_version < '3.14'",
+]
+kev = [
+    "kev[serve] @ git+https://github.com/jaredpalmer/kev.git ; python_version >= '3.12' and python_version < '3.14'",
+]
+# The Clef card tested torch 2.11 and transformers 5.10.2. Those rows are unpinned.
+clef = [
+    "torch",
+    "transformers",
+    "huggingface-hub",
+    "safetensors",
+    "pillow",
+]
+openai = [
+    "openai>=2.53.0",
+]
+anthropic = [
+    "anthropic>=0.121.0",
+]
+gemini = [
+    "google-genai>=2.24.0",
+]
+
+[project.scripts]
+systemone-serve = "systemone_serve.cli:main"
+s1 = "systemone_serve.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "pplx" },
+        { extra = "openjev" },
+        { extra = "openjev-mlx" },
+        { extra = "tev" },
+        { extra = "cua" },
+        { extra = "kev" },
+        { extra = "clef" },
+    ],
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
