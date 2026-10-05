@@ -329,24 +329,24 @@ def test_the_router_port_is_held_from_the_check_until_uvicorn_serves_it(capsys, 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux SO_REUSEADDR semantics")
 def test_a_listener_that_gets_in_first_is_exit_2_not_uvicorns_3(capsys, monkeypatch):
     # Linux lets two SO_REUSEADDR sockets bind one port until either listens; one that listens first wins the port.
-    squatter = socket.socket()
-    bind = cli._bind
+    port, squatter, listen = free_port(), socket.socket(), socket.socket.listen
+    squatter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    squatter.bind(("127.0.0.1", port))
+    squatting: list[bool] = []
 
-    def bind_then_lose_the_port(host, port):
-        sockets = bind(host, port)
-        squatter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        squatter.bind((host, port))
-        squatter.listen()
-        return sockets
+    def squatter_listens_first(sock, *args):  # whoever calls listen() on ours, the squatter's comes first
+        if not squatting:
+            squatting.append(True)
+            listen(squatter)
+        return listen(sock, *args)
 
-    monkeypatch.setattr(cli, "_bind", bind_then_lose_the_port)
+    monkeypatch.setattr(socket.socket, "listen", squatter_listens_first)
     try:
-        code = cli.main(["serve", "--port", str(free_port())])
+        code = cli.main(["serve", "--port", str(port)])
     finally:
         squatter.close()
     found = events(capsys.readouterr().out)
-    assert code == 2
-    assert found[0]["event"] == "listening" and found[-1]["error"]["code"] == "invalid_request"
+    assert code == 2 and found[-1]["error"]["code"] == "invalid_request"
     assert "Cannot listen" in found[-1]["error"]["message"]
 
 
@@ -380,3 +380,88 @@ def test_upstream_cannot_shadow_a_catalog_model_or_point_at_this_server(capsys, 
     port = free_port()
     code, out = run(capsys, "serve", "--port", str(port), "--upstream", f"loop=http://127.0.0.1:{port}")
     assert code == 2 and "points at this server itself" in out["error"]["message"]
+
+
+@pytest.mark.parametrize("host, url", [
+    ("127.0.0.1", "http://127.0.0.1:{port}"),
+    ("127.0.0.1", "http://localhost:{port}/"),
+    ("localhost", "http://127.0.0.1:{port}"),
+])
+def test_an_env_upstream_url_that_is_this_server_is_refused(capsys, monkeypatch, no_uvicorn, host, url):
+    port = free_port()
+    monkeypatch.setenv("SYSTEMONE_KEV_4B_URL", url.format(port=port))
+    monkeypatch.setenv("SYSTEMONE_KEV_4B_MODEL", "kev-4b")  # with this, each hop would ask the router for kev-4b again
+    code = cli.main(["serve", "--host", host, "--port", str(port)])
+    found = events(capsys.readouterr().out)
+    assert code == 2 and len(found) == 1  # refused before the listening event
+    message = found[0]["error"]["message"]
+    assert "kev-4b" in message and "(from SYSTEMONE_KEV_4B_URL)" in message and "points at this server itself" in message
+    assert no_uvicorn == []
+
+
+def test_a_catalog_default_url_that_is_this_server_is_refused(capsys, no_uvicorn):
+    port = int(BY_ID["openjev"].url.rsplit(":", 1)[1])
+    try:
+        socket.create_server(("127.0.0.1", port)).close()
+    except OSError:
+        pytest.skip(f"port {port} is in use here")
+    code, out = run(capsys, "serve", "--port", str(port))
+    assert code == 2 and "openjev's upstream" in out["error"]["message"]
+    assert "(from the catalog default)" in out["error"]["message"]
+
+
+def test_an_upstream_that_is_not_served_cannot_loop(capsys, monkeypatch, no_uvicorn):
+    port = free_port()
+    monkeypatch.setenv("SYSTEMONE_KEV_4B_URL", f"http://127.0.0.1:{port}")
+    code, out = run(capsys, "serve", "--port", str(port), "--model", "uniform-baseline")
+    assert code == 0 and out["models"] == ["uniform-baseline"]
+
+
+def test_the_command_line_upstream_url_is_the_one_checked(capsys, monkeypatch, no_uvicorn):
+    port = free_port()
+    monkeypatch.setenv("SYSTEMONE_ADHOC_URL", f"http://127.0.0.1:{port}")  # a self-loop, but --upstream wins
+    code, out = run(capsys, "serve", "--port", str(port), "--upstream", f"adhoc=http://127.0.0.1:{free_port()}#m")
+    assert code == 0 and "adhoc" in out["models"]
+    monkeypatch.setenv("SYSTEMONE_ADHOC_URL", "http://127.0.0.1:9")  # elsewhere, but --upstream wins
+    port = free_port()
+    code, out = run(capsys, "serve", "--port", str(port), "--upstream", f"adhoc=http://127.0.0.1:{port}")
+    assert code == 2 and "(from --upstream)" in out["error"]["message"]
+
+
+def test_sigterm_is_bounded_while_a_request_waits_on_a_hung_upstream():
+    hung = socket.create_server(("127.0.0.1", 0))  # accepts, never answers
+    held: list[socket.socket] = []
+    threading.Thread(target=lambda: held.append(hung.accept()[0]), daemon=True).start()
+    port = free_port()
+    env = {**os.environ, "SYSTEMONE_KEV_4B_URL": f"http://127.0.0.1:{hung.getsockname()[1]}"}
+    env.pop("TYPESAFE_API_KEY", None)
+    process = subprocess.Popen([sys.executable, "-m", "systemone_serve.cli", "serve", "--port", str(port),
+                                "--model", "kev-4b"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    body = json.dumps({"model": "kev-4b", "state": "s", "questions": {"q": {"type": "noul"}}}).encode()
+
+    def ask() -> None:
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/v1/systemone", data=body,
+                                         headers={"content-type": "application/json"})
+        try:
+            urllib.request.urlopen(request, timeout=60).close()
+        except OSError:
+            pass
+
+    try:
+        wait_for(lambda: router_up(port))
+        threading.Thread(target=ask, daemon=True).start()
+        wait_for(lambda: held)  # the router is now blocked on the upstream
+        started = time.monotonic()
+        process.send_signal(signal.SIGTERM)
+        _, stderr = process.communicate(timeout=60)
+        elapsed = time.monotonic() - started
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        hung.close()
+        for sock in held:
+            sock.close()
+    assert process.returncode == 143
+    assert elapsed < cli.SHUTDOWN_GRACE + cli.EXIT_GRACE + 5
+    assert b"still waiting on an upstream" in stderr
