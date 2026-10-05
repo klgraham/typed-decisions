@@ -145,3 +145,138 @@ def test_an_upstream_that_leads_back_to_the_router_fails_once_instead_of_recursi
     assert reply.status_code == 502 and reply.json()["error"]["code"] == "backend_failed"
     assert "508" in reply.json()["error"]["message"]
     assert hops == [router.instance]  # one hop, refused, no recursion
+
+
+@pytest.mark.parametrize("raw", [b"caf\xe9", b"\xff\xfe", "t\u00e9st".encode(), b"router-a, caf\xe9"])
+def test_a_non_ascii_hop_header_is_a_clean_422_not_a_502(raw):
+    """L-r6-1: such a header could not be forwarded (header values are ASCII), and used to come back as a misleading
+    502 "upstream body is not JSON" from a proxied model. Now the request is refused before any backend runs."""
+    from systemone_serve.backends.systemone_http import HOP_HEADER
+
+    http, echo = client()
+    reply = http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: raw})
+    assert reply.status_code == 422
+    error = reply.json()["error"]
+    assert error["code"] == "invalid_request" and HOP_HEADER in error["message"]
+    assert "ASCII letters" in error["message"] and "not JSON" not in error["message"]
+    assert echo.seen == []
+
+
+@pytest.mark.parametrize("header, entry", [
+    ("a b", 1), ("ok,a;b", 2), ("a/b", 1), ("<script>", 1), ("r0,a\tb", 2), ("a.b", 1), ("a=b", 1),
+])
+def test_a_malformed_hop_entry_is_refused_and_names_its_position(header, entry):
+    from systemone_serve.backends.systemone_http import HOP_HEADER
+
+    http, echo = client()
+    reply = http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: header})
+    assert reply.status_code == 422 and reply.json()["error"]["code"] == "invalid_request"
+    assert f"entry {entry} " in reply.json()["error"]["message"]
+    assert header not in reply.json()["error"]["message"]  # the entry's text is not echoed back
+    assert echo.seen == []
+
+
+def test_hop_entries_are_capped_in_length_and_empty_entries_are_ignored():
+    from systemone_serve.backends.systemone_http import HOP_ENTRY_MAX, HOP_HEADER
+
+    http, echo = client()
+    longest = "a" * HOP_ENTRY_MAX
+    assert http.post("/v1/systemone", json={**QUESTION, "model": "echo"},
+                     headers={HOP_HEADER: f" , {longest},, b_-9 ,"}).status_code == 200
+    assert echo.seen[0].via[:2] == (longest, "b_-9")
+    oversized = http.post("/v1/systemone", json={**QUESTION, "model": "echo"},
+                          headers={HOP_HEADER: f"ok,{longest}a"})
+    assert oversized.status_code == 422
+    assert f"entry 2 is {HOP_ENTRY_MAX + 1} characters long" in oversized.json()["error"]["message"]
+    assert len(echo.seen) == 1
+
+
+def test_a_non_ascii_hop_header_on_a_proxied_model_never_reaches_the_upstream():
+    """CR's r6 repro: the same header on a model served by a System One upstream (kev-4b here, over a mock)."""
+    import httpx2
+
+    from systemone_serve.backends.systemone_http import HOP_HEADER, SystemOneHTTP
+
+    sent: list[httpx2.Request] = []
+
+    def upstream(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return httpx2.Response(200, json={"model": "kev-latest", "answers": {"q": {"type": "noul", "noul": 0.9}},
+                                          "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    backend = SystemOneHTTP.for_spec(CATALOG[[s.id for s in CATALOG].index("kev-4b")], transport=httpx2.MockTransport(upstream))
+    http = TestClient(create_app(Router(specs=[], backends={"kev-4b": backend}), api_key=""))
+    for raw in (b"a,b,caf\xe9", b"\xff\xfe", "t\u00e9st".encode()):
+        reply = http.post("/v1/systemone", json={**QUESTION, "model": "kev-4b"}, headers={HOP_HEADER: raw})
+        assert reply.status_code == 422 and reply.json()["error"]["code"] == "invalid_request", reply.text
+    assert sent == []
+    ok = http.post("/v1/systemone", json={**QUESTION, "model": "kev-4b"}, headers={HOP_HEADER: "a,b"})
+    assert ok.status_code == 200 and sent[0].headers[HOP_HEADER].startswith("a,b,")
+
+
+def test_a_proxy_that_prepends_its_own_hop_line_cannot_hide_the_router():
+    """CR's r1 repro (L-r1-1): router -> proxy -> the same router, where the proxy adds its hop as a header line before
+    the router's. When only the first line was read the router never saw its own id, the chain never grew, and it
+    forwarded until the proxy's cap (12 here). Every line is read now, so the second round is refused (508)."""
+    import httpx2
+    from typesafe_sdk import RetryPolicy
+
+    from systemone_serve.backends.systemone_http import HOP_HEADER, SystemOneHTTP
+
+    router = Router(specs=[], backends={})
+    inner = TestClient(create_app(router, api_key=""))
+    seen: list[list[str]] = []
+
+    def prepending_proxy(request: httpx2.Request) -> httpx2.Response:
+        lines = request.headers.get_list(HOP_HEADER)
+        seen.append(lines)
+        if len(seen) > 12:
+            return httpx2.Response(503, json={"error": {"code": "backend_failed", "message": "proxy cap hit"}})
+        headers = [("content-type", "application/json"), (HOP_HEADER, "edge-proxy")] + [(HOP_HEADER, v) for v in lines]
+        reply = inner.post(request.url.path, content=request.content, headers=headers)
+        return httpx2.Response(reply.status_code, content=reply.content, headers={"content-type": "application/json"})
+
+    router._backends["loop"] = SystemOneHTTP("loop", "http://edge-proxy.invalid", "loop", hop=True, label="loop",
+                                             retry=RetryPolicy(max_retries=0),
+                                             transport=httpx2.MockTransport(prepending_proxy))
+    reply = inner.post("/v1/systemone", json={**QUESTION, "model": "loop"})
+    assert reply.status_code == 502 and reply.json()["error"]["code"] == "backend_failed"
+    assert "508" in reply.json()["error"]["message"] and "proxy cap" not in reply.json()["error"]["message"]
+    assert seen == [[router.instance]]  # one forward; the router saw its own id behind the proxy's line and stopped
+
+
+def test_every_hop_header_line_is_read_validated_and_forwarded_as_one_chain():
+    import httpx2
+
+    from systemone_serve.backends.systemone_http import (
+        HOP_HEADER,
+        MAX_HOPS,
+        SystemOneHTTP,
+    )
+
+    http, echo = client()
+
+    def post(*lines: str):
+        return http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers=[(HOP_HEADER, v) for v in lines])
+
+    assert post("edge", "r1, r2").status_code == 200
+    instance = echo.seen[0].via[-1]
+    assert echo.seen[0].via == ("edge", "r1", "r2", instance)  # in order, this router appended
+    assert post("edge", f"r1,{instance}").status_code == 508  # own id on the second line
+    assert post(*[f"a{n},b{n}" for n in range(MAX_HOPS // 2)]).status_code == 508  # the hop cap counts every line
+    malformed = post("ok", "a b")
+    assert malformed.status_code == 422 and "entry 2 " in malformed.json()["error"]["message"]
+    assert len(echo.seen) == 1
+
+    sent: list[httpx2.Request] = []
+
+    def upstream(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return httpx2.Response(200, json={"model": "kev-latest", "answers": {"q": {"type": "noul", "noul": 0.9}},
+                                          "usage": {"input_tokens": 1, "output_tokens": 1}})
+
+    backend = SystemOneHTTP.for_spec(CATALOG[[s.id for s in CATALOG].index("kev-4b")], transport=httpx2.MockTransport(upstream))
+    proxied = TestClient(create_app(Router(specs=[], backends={"kev-4b": backend}), api_key=""))
+    reply = proxied.post("/v1/systemone", json={**QUESTION, "model": "kev-4b"}, headers=[(HOP_HEADER, "edge"), (HOP_HEADER, "r1")])
+    assert reply.status_code == 200
+    assert sent[0].headers.get_list(HOP_HEADER) == [f"edge,r1,{sent[0].headers[HOP_HEADER].split(',')[-1]}"]
