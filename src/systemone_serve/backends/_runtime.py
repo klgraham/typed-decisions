@@ -32,10 +32,12 @@ def pick_device(torch: Any, allowed: tuple[str, ...]) -> str:
     raise BackendUnavailable(f"No supported device: needs one of {', '.join(allowed)}. Set {DEVICE_ENV} to override.")
 
 
-def snapshot(repo: str) -> str:
+def snapshot(repo: str, revision: str | None, allow_patterns: list[str] | None = None) -> str:
+    """Local path of a Hugging Face snapshot at a pinned commit. Code from these snapshots gets executed, so the
+    catalog pins `revision` to a commit SHA for every repo."""
     from huggingface_hub import snapshot_download
 
     try:
-        return snapshot_download(repo)
+        return snapshot_download(repo, revision=revision, allow_patterns=allow_patterns)
     except Exception as error:  # huggingface_hub raises several unrelated types for network and auth failures
-        raise BackendUnavailable(f"Could not download {repo} from Hugging Face: {error}") from error
+        raise BackendUnavailable(f"Could not download {repo}@{revision or 'main'} from Hugging Face: {error}") from error

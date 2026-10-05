@@ -9,7 +9,12 @@ from typing import Any
 from systemone_serve.answers import Request
 from systemone_serve.backends._runtime import import_torch, pick_device, snapshot
 from systemone_serve.catalog import ModelSpec
-from systemone_serve.errors import BackendUnavailable, InvalidRequest
+from systemone_serve.errors import (
+    BackendFailed,
+    BackendUnavailable,
+    ServeError,
+    describe,
+)
 
 
 class Clef:
@@ -24,9 +29,15 @@ class Clef:
             if self._loaded is None:
                 torch = import_torch("clef")
                 device = pick_device(torch, ("cuda",))
-                path = Path(snapshot(self.spec.hf_repo))
-                module = _import_file(f"clef_joint_schema_{self.spec.id.replace('-', '_')}", path / "joint_schema_model.py")
-                model, processor = module.load_release_model(path, device=device)
+                # joint_schema_model.py is executed in this process, so it comes from the pinned commit only.
+                path = Path(snapshot(self.spec.hf_repo, self.spec.hf_revision))
+                try:
+                    module = _import_file(f"clef_joint_schema_{self.spec.id.replace('-', '_')}", path / "joint_schema_model.py")
+                    model, processor = module.load_release_model(path, device=device)
+                except ServeError:
+                    raise
+                except Exception as error:
+                    raise BackendUnavailable(f"{self.spec.id}: could not load the model: {describe(error)}") from error
                 self._loaded = (module, model, processor)
             return self._loaded
 
@@ -35,8 +46,8 @@ class Clef:
         try:
             with self._lock:
                 return module.systemone(model, processor, request.body(model=self.spec.id))
-        except ValueError as error:
-            raise InvalidRequest(f"{self.spec.id}: {error}") from error
+        except Exception as error:  # the release code raises ValueError for model and input failures alike
+            raise BackendFailed(f"{self.spec.id}: {describe(error)}") from error
 
 
 def _import_file(name: str, path: Path) -> ModuleType:
