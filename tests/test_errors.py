@@ -167,7 +167,7 @@ def test_server_bug_traceback_is_scrubbed(caplog, monkeypatch):
     for name, value in SECRETS.items():
         monkeypatch.setenv(name, value)
     router = Router(specs=[], backends={})
-    monkeypatch.setattr(router, "evaluate", lambda body: (_ for _ in ()).throw(RuntimeError(LEAKY)))
+    monkeypatch.setattr(router, "evaluate", lambda body, via=(): (_ for _ in ()).throw(RuntimeError(LEAKY)))
     http = TestClient(create_app(router, api_key=""), raise_server_exceptions=False)
     with caplog.at_level("ERROR"):
         reply = http.post("/v1/systemone", json={**CHOICE, "model": "m"})

@@ -1,4 +1,7 @@
-"""The HTTP surface: POST /v1/systemone, GET /v1/models, GET /health. Optional Bearer auth for this server."""
+"""The HTTP surface: POST /v1/systemone, GET /v1/models, GET /health. Optional Bearer auth for this server.
+
+POST /v1/systemone refuses (HTTP 508, `loop_detected`) a request whose hop header already names this router, or that
+has passed through MAX_HOPS routers, so a misrouted upstream cannot make the router call itself without end."""
 
 import hmac
 import json
@@ -10,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from systemone_serve.backends.systemone_http import HOP_HEADER, MAX_HOPS, hop_chain
 from systemone_serve.errors import ServeError, scrub
 from systemone_serve.router import Router
 
@@ -38,12 +42,17 @@ def create_app(router: Router, api_key: str | None = None) -> FastAPI:
     async def systemone(request: Request) -> JSONResponse:
         if (denied := unauthorized(request)) is not None:
             return denied
+        via = hop_chain(request.headers.get(HOP_HEADER))
+        if router.instance in via or len(via) >= MAX_HOPS:
+            return JSONResponse({"error": {"code": "loop_detected", "message": (
+                f"This request already passed through this router ({HOP_HEADER} has {len(via)} hop(s)): an upstream "
+                "URL leads back to it. Point that model's upstream somewhere else.")}}, status_code=508)
         try:
             body = json.loads(await request.body())
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             return JSONResponse({"error": {"code": "invalid_request", "message": f"Body is not UTF-8 JSON: {error}"}}, status_code=422)
         try:
-            return JSONResponse(await run_in_threadpool(router.evaluate, body))
+            return JSONResponse(await run_in_threadpool(router.evaluate, body, via))
         except ServeError as error:
             return JSONResponse(error_body(error), status_code=error.status)
         except Exception as error:  # a bug in this package; the router already maps every backend failure

@@ -4,6 +4,11 @@ This covers hosted Jev and the upstream servers for Perplexity (autojev.server),
 Kev (kev.serve), Tev1 (Ollama), and any URL added with `--upstream`. The SDK does auth, retries, and structural
 validation; the router then checks the answers against the request (`answers.validate`). A local upstream's body is
 returned as is, except that `model` becomes the router id and the upstream's own name moves to `upstream_model`.
+
+Every request to a local upstream carries `x-systemone-serve-via`: the routers it has passed through (`Request.via`,
+which the router appends itself to). A router refuses a request that already names it (see `server`), so an upstream
+URL that leads back to it, directly, through a hostname alias, or through another router, fails once instead of
+recursing.
 """
 
 import os
@@ -27,6 +32,12 @@ from systemone_serve.errors import BackendFailed, BackendUnavailable, InvalidReq
 
 JEV_KEY_ENV = "TYPESAFE_API_KEY"
 NO_KEY = "local"
+HOP_HEADER = "x-systemone-serve-via"
+MAX_HOPS = 8
+
+
+def hop_chain(header: str | None) -> list[str]:
+    return [part.strip() for part in (header or "").split(",") if part.strip()]
 
 
 class SystemOneHTTP:
@@ -43,6 +54,7 @@ class SystemOneHTTP:
         timeout: float = 300.0,
         transport: httpx2.BaseTransport | None = None,
         label: str | None = None,
+        hop: bool = False,
     ) -> None:
         self.name = name
         self.base_url = base_url
@@ -54,6 +66,7 @@ class SystemOneHTTP:
         self.timeout = timeout
         self.transport = transport
         self.label = label
+        self.hop = hop
 
     @classmethod
     def for_spec(cls, spec: ModelSpec, transport: httpx2.BaseTransport | None = None, relabel: bool = True) -> "SystemOneHTTP":
@@ -67,7 +80,7 @@ class SystemOneHTTP:
             raise BackendUnavailable(f"{spec.id}: no upstream URL. Set {spec.url_env}.")
         hint = f"Start it with `sys1 serve --model {spec.id} --launch`, or set {spec.url_env}."
         return cls(spec.id, url, spec.resolved_model(), key_env=spec.auth_env, hint=hint,
-                   retry=RetryPolicy(max_retries=0), transport=transport, label=spec.id if relabel else None)
+                   retry=RetryPolicy(max_retries=0), transport=transport, label=spec.id if relabel else None, hop=True)
 
     def _api_key(self) -> str:
         key = os.environ.get(self.key_env, "").strip() if self.key_env else ""
@@ -83,11 +96,12 @@ class SystemOneHTTP:
     def evaluate(self, request: Request) -> dict[str, Any]:
         api_key = self._api_key()
         model = self.upstream_model or request.model
+        headers = {HOP_HEADER: ",".join(request.via)} if self.hop and request.via else None
         try:
             with TypeSafeClient(api_key=api_key, base_url=self.base_url, model=model, retry=self.retry,
                                 timeout=self.timeout, transport=self.transport) as client:
                 result = client.system_one(request.state, request.questions, model=model,
-                                           extra_body=request.extra or None)
+                                           extra_body=request.extra or None, extra_headers=headers)
                 body = result.raw_http_response.json()
         except TypeSafeAPIConnectionError as error:
             raise BackendUnavailable(f"{self.name}: cannot reach {self.base_url} ({error}). {self.hint}".strip()) from error

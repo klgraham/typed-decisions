@@ -105,3 +105,43 @@ def test_typesafe_sdk_is_a_drop_in_client(running_router):
         assert result.model == "uniform-baseline"
         assert result.nouls["refund"].noul == 0.5
         assert [m.name for m in sdk.models.list().models][:3] == ["clef", "clef-flash", "cua-s1-4b-0.2"]
+
+
+def test_a_request_that_already_passed_through_this_router_is_refused():
+    from systemone_serve.backends.systemone_http import HOP_HEADER, MAX_HOPS
+
+    http, echo = client()
+    assert http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: "other"}).status_code == 200
+    instance = echo.seen[0].via[-1]  # the router adds itself to the chain
+    assert echo.seen[0].via == ("other", instance)
+    looped = http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: f"other, {instance}"})
+    assert looped.status_code == 508 and looped.json()["error"]["code"] == "loop_detected"
+    too_far = http.post("/v1/systemone", json={**QUESTION, "model": "echo"},
+                        headers={HOP_HEADER: ",".join(f"r{hop}" for hop in range(MAX_HOPS))})
+    assert too_far.status_code == 508
+    assert len(echo.seen) == 1  # neither refused request reached the backend
+
+
+def test_an_upstream_that_leads_back_to_the_router_fails_once_instead_of_recursing():
+    """The upstream is this router's own app behind a host name the startup address check cannot recognize."""
+    import httpx2
+    from typesafe_sdk import RetryPolicy
+
+    from systemone_serve.backends.systemone_http import HOP_HEADER, SystemOneHTTP
+
+    router = Router(specs=[], backends={})
+    inner = TestClient(create_app(router, api_key=""))
+    hops: list[str | None] = []
+
+    def forward(request: httpx2.Request) -> httpx2.Response:
+        hops.append(request.headers.get(HOP_HEADER))
+        reply = inner.post(request.url.path, content=request.content,
+                           headers={"content-type": "application/json", HOP_HEADER: request.headers.get(HOP_HEADER, "")})
+        return httpx2.Response(reply.status_code, content=reply.content, headers={"content-type": "application/json"})
+
+    router._backends["loop"] = SystemOneHTTP("loop", "http://an-alias.invalid", "loop", hop=True, label="loop",
+                                             retry=RetryPolicy(max_retries=0), transport=httpx2.MockTransport(forward))
+    reply = inner.post("/v1/systemone", json={**QUESTION, "model": "loop"})
+    assert reply.status_code == 502 and reply.json()["error"]["code"] == "backend_failed"
+    assert "508" in reply.json()["error"]["message"]
+    assert hops == [router.instance]  # one hop, refused, no recursion
