@@ -14,10 +14,9 @@ Python SDK generates from OpenAI's OpenAPI spec (`openai.types.decision*`, opena
 `confidence` is its own field: the guide's example has a top probability of 0.95 and a confidence of 0.93, so it is
 not derived from the distribution here. Choice and level count limits are not in OpenAI's docs and are not enforced
 (see docs/decisions-api.md). The SDK is not used, so this needs no extra (openai>=3.26 conflicts with this repo's
-openjev pins); httpx2 is already a core dependency through typesafe-sdk.
+openjev pins); httpx2 is a declared core dependency.
 """
 
-import json
 import math
 import os
 from typing import Any
@@ -26,12 +25,13 @@ import httpx2
 from typesafe_sdk import Choice, Noul, Score
 
 from typed_decisions.answers import EPSILON, Request, _probabilities, render
-from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest, scrub
+from typed_decisions.errors import MIN_SECRET_LENGTH, BackendFailed, BackendUnavailable, InvalidRequest, scrub
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 OPENAI_KEY_ENV = "OPENAI_API_KEY"
 BASE_URL_ENV = "OPENAI_BASE_URL"
 DEFAULT_MODEL = "gpt-6-luna"
+MAX_BODY_BYTES = 10 * 1024 * 1024  # far above any real answer set; bounds what is parsed
 
 
 def _unit(value: Any) -> bool:
@@ -172,7 +172,7 @@ class OpenAIDecisions:
         return None
 
     def _fail(self, error: type[Exception], message: str, key: str | None) -> Exception:
-        if key and len(key) >= 6:
+        if key and len(key) >= MIN_SECRET_LENGTH:
             message = message.replace(key, "***")  # an explicit key is not in errors.SECRET_ENVS
         return error(scrub(message))
 
@@ -204,12 +204,18 @@ class OpenAIDecisions:
             raise self._fail(
                 InvalidRequest, f"{self.name}: upstream rejected the request (HTTP {response.status_code}): {text}", key
             )
-        if response.status_code >= 400:
+        if 300 <= response.status_code < 400:
+            raise BackendFailed(
+                f"{self.name}: unexpected redirect (HTTP {response.status_code}); redirects are not followed."
+            )
+        if not 200 <= response.status_code < 300 or response.status_code == 204:
             raise self._fail(BackendFailed, f"{self.name}: upstream returned HTTP {response.status_code}: {text}", key)
+        if len(response.content) > MAX_BODY_BYTES:
+            raise BackendFailed(f"{self.name}: response body is larger than {MAX_BODY_BYTES} bytes.")
         try:
             result = response.json()
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise BackendFailed(f"{self.name}: upstream body is not JSON: {error}") from error
+        except (ValueError, RecursionError) as error:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+            raise BackendFailed(f"{self.name}: upstream body is not JSON: {type(error).__name__}") from None
         if not isinstance(result, dict) or not isinstance(result.get("answers"), list):
             raise BackendFailed(f'{self.name}: response must be an object with an "answers" array.')
         return result

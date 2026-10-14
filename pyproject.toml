@@ -12,6 +12,7 @@ requires-python = ">=3.12"
 dependencies = [
     "typesafe-sdk==0.7.2",
     "pydantic>=2.12,<3",
+    "httpx2>=2.13,<3",  # imported directly (client, Decisions backend, SystemOne backend)
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "huggingface-hub>=1.31",

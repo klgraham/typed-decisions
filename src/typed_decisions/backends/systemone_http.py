@@ -32,7 +32,7 @@ from typesafe_sdk import (
 
 from typed_decisions.answers import Request
 from typed_decisions.catalog import TYPESAFE_URL, ModelSpec
-from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest
+from typed_decisions.errors import MIN_SECRET_LENGTH, BackendFailed, BackendUnavailable, InvalidRequest, ServeError
 
 JEV_KEY_ENV = "TYPESAFE_API_KEY"
 NO_KEY = "local"
@@ -143,6 +143,19 @@ class SystemOneHTTP:
         return NO_KEY
 
     def evaluate(self, request: Request) -> dict[str, Any]:
+        if not self.api_key:
+            return self._evaluate(request)
+        try:
+            return self._evaluate(request)
+        except ServeError as error:
+            # An explicit key is not in SECRET_ENVS: scrub it from the message and drop the cause chain, whose
+            # upstream errors may still carry it, so a printed traceback cannot show it.
+            message = error.args[0] if error.args else ""
+            if len(self.api_key) >= MIN_SECRET_LENGTH:
+                message = message.replace(self.api_key, "***")
+            raise type(error)(message) from None
+
+    def _evaluate(self, request: Request) -> dict[str, Any]:
         api_key = self._api_key()
         model = self.upstream_model or request.model
         headers = None

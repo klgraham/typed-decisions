@@ -22,7 +22,8 @@ from typed_decisions import (
     ScoreAnswer,
 )
 
-LIVE_KEY = os.environ.get("OPENAI_API_KEY", "").strip()  # read before the autouse fixture clears it
+# Billed: runs only with TD_LIVE=1 and a key, never just because OPENAI_API_KEY is exported.
+LIVE_KEY = os.environ.get("OPENAI_API_KEY", "").strip() if os.environ.get("TD_LIVE") == "1" else ""
 
 QUESTIONS = {
     "urgent": Noul(instructions="Is this urgent?", criteria={"true": "Needs action today"}),
@@ -198,6 +199,19 @@ def test_not_json_and_http_errors():
         client({"error": {}}, 401)[0].evaluate("x", QUESTIONS)
     with pytest.raises(BackendFailed, match="HTTP 500"):
         client({"error": {}}, 500)[0].evaluate("x", QUESTIONS)
+    with pytest.raises(BackendFailed, match="HTTP 204"):  # no content: not a success here
+        client(GOOD, 204)[0].evaluate("x", QUESTIONS)
+    for status in (302, 307):
+        with pytest.raises(BackendFailed, match="unexpected redirect"):
+            client(GOOD, status)[0].evaluate("x", QUESTIONS)
+
+
+def test_deeply_nested_and_oversized_bodies_fail_cleanly():
+    deep = b'{"answers":' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+    with pytest.raises(BackendFailed, match="not JSON"):
+        client(deep)[0].evaluate("x", QUESTIONS)
+    with pytest.raises(BackendFailed, match="larger than"):
+        client(b'{"answers": [], "pad": "' + b"x" * (10 * 1024 * 1024) + b'"}')[0].evaluate("x", QUESTIONS)
 
 
 def test_connection_error():
@@ -315,7 +329,53 @@ def test_library_import_pulls_in_no_server_or_extras():
 
 
 @pytest.mark.live
-@pytest.mark.skipif(not LIVE_KEY, reason="OPENAI_API_KEY not set")
+@pytest.mark.skipif(not LIVE_KEY, reason="billed: set TD_LIVE=1 and OPENAI_API_KEY")
 def test_live_openai_decisions():
     out = DecisionClient.openai(api_key=LIVE_KEY).evaluate("I was charged twice for my order.", QUESTIONS)
     assert set(out) == set(QUESTIONS)
+
+
+def _chain_text(error: BaseException) -> str:
+    import traceback
+
+    return "".join(traceback.format_exception(error))
+
+
+def test_systemone_explicit_key_not_in_traceback():
+    key = "ts-explicit-secret-key-1"
+    transport, _ = mock({"error": {"message": f"bad key {key}"}}, 500)
+    with pytest.raises(BackendFailed) as caught:
+        DecisionClient.systemone(api_key=key, transport=transport).evaluate("x", QUESTIONS)
+    assert key not in str(caught.value) and key not in _chain_text(caught.value)
+    # SystemOneHTTP used directly with api_key scrubs too.
+    from typed_decisions.answers import parse
+    from typed_decisions.backends.systemone_http import SystemOneHTTP
+
+    backend = SystemOneHTTP("x", "http://127.0.0.1:9", "m", api_key=key, transport=transport)
+    request = parse({"model": "m", "state": "x", "questions": {"q": {"type": "noul", "instructions": "?"}}})
+    with pytest.raises(BackendFailed) as caught:
+        backend.evaluate(request)
+    assert key not in _chain_text(caught.value) and "***" in str(caught.value)
+
+
+@pytest.mark.parametrize("provider", ["openai", "systemone"])
+def test_named_api_key_env_value_is_scrubbed(monkeypatch, provider):
+    secret = "my-own-named-secret-42"
+    monkeypatch.setenv("MY_KEY", secret)
+    transport, calls = mock({"error": {"message": f"echo {secret}"}}, 500)
+    make = DecisionClient.openai if provider == "openai" else DecisionClient.systemone
+    with pytest.raises(BackendFailed) as caught:
+        make(base_url="http://127.0.0.1:9", api_key_env="MY_KEY", transport=transport).evaluate("x", QUESTIONS)
+    assert calls[-1].headers["authorization"] == f"Bearer {secret}"
+    assert secret not in str(caught.value) and secret not in _chain_text(caught.value)
+
+
+def test_openai_explicit_key_not_in_traceback():
+    key = "sk-explicit-traceback-9"
+
+    def boom(request):
+        raise httpx2.ConnectError(f"refused {key}")
+
+    with pytest.raises(BackendUnavailable) as caught:
+        DecisionClient.openai(api_key=key, transport=httpx2.MockTransport(boom)).evaluate("x", QUESTIONS)
+    assert key not in _chain_text(caught.value)

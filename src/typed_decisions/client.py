@@ -13,6 +13,7 @@ distribution). Failures raise the package's errors (`InvalidRequest`, `BackendUn
 values scrubbed. This module imports neither the server (FastAPI, uvicorn) nor any model extra.
 """
 
+import os
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 
@@ -21,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typesafe_sdk import Choice, Noul, Score
 
 from typed_decisions import answers as _answers
-from typed_decisions.errors import ServeError
+from typed_decisions.errors import MIN_SECRET_LENGTH, ServeError
 
 
 class NoulAnswer(BaseModel):
@@ -76,11 +77,25 @@ def _typed(raw: dict[str, Any]) -> NoulAnswer | ChoiceAnswer | ScoreAnswer | Ref
 class DecisionClient:
     """Evaluate questions against one backend. Build it with `openai()` or `systemone()`."""
 
-    def __init__(self, backend: Any, model: str, provider: Literal["openai", "systemone"], secret: str | None) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        model: str,
+        provider: Literal["openai", "systemone"],
+        secret: str | None,
+        secret_env: str | None = None,
+    ) -> None:
         self._backend = backend
         self.model = model
         self.provider = provider
         self._secret = secret
+        self._secret_env = secret_env
+
+    def _secrets(self) -> list[str]:
+        """Key values this client may send that `errors.scrub` does not know: the explicit key and the value of a
+        named `api_key_env`. Values shorter than MIN_SECRET_LENGTH are not scrubbed (they would hit ordinary text)."""
+        values = [self._secret or "", os.environ.get(self._secret_env, "").strip() if self._secret_env else ""]
+        return [value for value in values if len(value) >= MIN_SECRET_LENGTH]
 
     @classmethod
     def openai(
@@ -100,7 +115,7 @@ class DecisionClient:
         backend = OpenAIDecisions(
             model, base_url=base_url, api_key=api_key, api_key_env=api_key_env, timeout=timeout, transport=transport
         )
-        return cls(backend, model, "openai", api_key)
+        return cls(backend, model, "openai", api_key, api_key_env)
 
     @classmethod
     def systemone(
@@ -130,7 +145,7 @@ class DecisionClient:
             transport=transport,
             api_key=api_key,
         )
-        return cls(backend, model, "systemone", api_key)
+        return cls(backend, model, "systemone", api_key, api_key_env)
 
     def evaluate(
         self,
@@ -152,7 +167,11 @@ class DecisionClient:
             else:
                 result = _answers.validate(request, self._backend.evaluate(request), self._backend.name)
         except ServeError as error:
-            if self._secret and len(self._secret) >= 6 and self._secret in error.args[0]:
-                raise type(error)(error.args[0].replace(self._secret, "***")) from error
-            raise
+            secrets = self._secrets()
+            if not secrets:
+                raise
+            message = error.args[0] if error.args else ""
+            for value in secrets:
+                message = message.replace(value, "***")
+            raise type(error)(message) from None  # the cause chain may still hold the key
         return {key: _typed(result["answers"][key]) for key in request.questions}

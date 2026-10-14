@@ -37,3 +37,11 @@ Responses are checked like System One answers: one answer per question, in order
 - Error body shape and status codes for this endpoint (assumed to follow OpenAI's usual `{"error": {...}}`; only the status code is relied on).
 - Whether the API rejects duplicate question names or choice values (this client never sends duplicates).
 - Behaviour of compatible gateways at other base URLs.
+
+## Keys, retries, limits
+
+- Key values are scrubbed from error messages, and the cause chain is dropped (`raise ... from None`) whenever an explicit `api_key` or a named `api_key_env` is in play, so a printed traceback cannot show them. Values shorter than 6 characters (`errors.MIN_SECRET_LENGTH`) are not scrubbed, since they would match ordinary text.
+- `DecisionClient.systemone()` against a URL other than hosted Jev, with no key, sends `Authorization: Bearer local`, the router's existing placeholder (`NO_KEY`), not a secret. `DecisionClient.openai()` with no key sends no Authorization header.
+- Retries differ: `systemone()` goes through `typesafe-sdk`, which retries 429/5xx with its default policy; `openai()` makes exactly one request and leaves retrying to the caller.
+- The Decisions backend requires a 2xx status with a body (204 fails), never follows redirects (3xx is `BackendFailed`), and refuses bodies over 10 MiB. Malformed or too-deeply nested JSON is `BackendFailed`.
+- The live test is billed and runs only with `TD_LIVE=1` and `OPENAI_API_KEY` set.
