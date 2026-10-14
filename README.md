@@ -32,7 +32,7 @@ An LLM can approximate the same decisions by generating tokens. `td compare` run
 
 ## Library use and the OpenAI Decisions API
 
-`typed_decisions` is also a client library. `DecisionClient` sends the same questions (the SDK's `Noul`, `Choice`, `Score`) to a System One server or to the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`POST /v1/decisions`, public beta, model `gpt-6-luna`) and returns typed answers keyed by question name. Importing it pulls in neither the server (FastAPI, uvicorn) nor any model extra, and it needs no extra: Decisions is spoken over HTTP with `httpx2` (a core dependency, also used by `typesafe-sdk`).
+`typed_decisions` is also a client library. `DecisionClient` sends the same questions (the SDK's `Noul`, `Choice`, `Score`) to a System One server or to the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`POST /v1/decisions`, public beta, model `gpt-6-luna`) and returns typed answers keyed by question name. Importing it pulls in neither the server (FastAPI, uvicorn) nor any model extra, and `systemone()` needs no extra. `openai()` uses the official OpenAI SDK through the optional extra `typed-decisions[openai-decisions]` (`openai>=3.26.0`), which cannot be combined with the `openjev`, `openjev-mlx` or `llm-openai` extras because they pin older `openai` releases.
 
 ```python
 from typed_decisions import Choice, DecisionClient, Noul, Refusal

@@ -23,6 +23,14 @@ from typed_decisions import (
 )
 
 # Billed: runs only with TD_LIVE=1 and a key, never just because OPENAI_API_KEY is exported.
+try:
+    from openai.resources.decisions import Decisions as _Decisions  # noqa: F401
+
+    HAS_SDK = True
+except ImportError:
+    HAS_SDK = False
+sdk = pytest.mark.skipif(not HAS_SDK, reason="needs the openai-decisions extra (uv run --extra openai-decisions)")
+
 LIVE_KEY = os.environ.get("OPENAI_API_KEY", "").strip() if os.environ.get("TD_LIVE") == "1" else ""
 
 QUESTIONS = {
@@ -84,6 +92,7 @@ def client(reply, status=200, **kwargs):
     return DecisionClient.openai(transport=transport, **kwargs), calls
 
 
+@sdk
 def test_request_wire_format():
     c, calls = client(GOOD)
     c.evaluate("I was charged twice.", QUESTIONS)
@@ -115,12 +124,14 @@ def test_request_wire_format():
     }
 
 
+@sdk
 def test_structured_state_is_sent_as_json_text():
     c, calls = client({"answers": [{"type": "predicate", "name": "urgent", "probability": 0.5}]})
     c.evaluate({"ticket": 7}, {"urgent": QUESTIONS["urgent"]})
     assert json.loads(calls[0].content)["input"] == '{"ticket": 7}'
 
 
+@sdk
 def test_response_mapping():
     c, _ = client(GOOD)
     out = c.evaluate("x", QUESTIONS)
@@ -137,6 +148,7 @@ def test_response_mapping():
     )
 
 
+@sdk
 def test_refusal_is_its_own_type():
     reply = json.loads(json.dumps(GOOD))
     reply["answers"][1] = {"type": "refusal", "name": "department"}
@@ -146,6 +158,7 @@ def test_refusal_is_its_own_type():
     assert not hasattr(out["department"], "probabilities")
 
 
+@sdk
 def test_partial_top_k_probabilities_are_allowed():
     reply = json.loads(json.dumps(GOOD))
     reply["answers"][1]["probabilities"] = [{"value": "billing", "probability": 0.95}]
@@ -174,12 +187,14 @@ def _bad(mutate):
         (lambda r: r.pop("answers"), '"answers" array'),
     ],
 )
+@sdk
 def test_malformed_responses_fail(mutate, message):
     with pytest.raises(BackendFailed) as caught:
         client(_bad(mutate))[0].evaluate("x", QUESTIONS)
     assert message in str(caught.value)
 
 
+@sdk
 def test_sum_tolerance_matches_system_one():
     # Two options reported to 2 decimals may sum to 1 + 0.02 by rounding; 1.03 is too much.
     def at(total):
@@ -190,6 +205,7 @@ def test_sum_tolerance_matches_system_one():
         client(at(1.03))[0].evaluate("x", QUESTIONS)
 
 
+@sdk
 def test_not_json_and_http_errors():
     with pytest.raises(BackendFailed, match="not JSON"):
         client(b"<html>")[0].evaluate("x", QUESTIONS)
@@ -206,6 +222,7 @@ def test_not_json_and_http_errors():
             client(GOOD, status)[0].evaluate("x", QUESTIONS)
 
 
+@sdk
 def test_deeply_nested_and_oversized_bodies_fail_cleanly():
     deep = b'{"answers":' + b"[" * 100_000 + b"]" * 100_000 + b"}"
     with pytest.raises(BackendFailed, match="not JSON"):
@@ -214,6 +231,7 @@ def test_deeply_nested_and_oversized_bodies_fail_cleanly():
         client(b'{"answers": [], "pad": "' + b"x" * (10 * 1024 * 1024) + b'"}')[0].evaluate("x", QUESTIONS)
 
 
+@sdk
 def test_connection_error():
     def boom(request):
         raise httpx2.ConnectError("refused")
@@ -223,6 +241,7 @@ def test_connection_error():
         c.evaluate("x", QUESTIONS)
 
 
+@sdk
 def test_keys_are_scrubbed(monkeypatch):
     echo = {"error": {"message": "bad key sk-test-explicit-123 and sk-env-secret-456"}}
     with pytest.raises(BackendFailed) as caught:
@@ -235,6 +254,7 @@ def test_keys_are_scrubbed(monkeypatch):
     assert "sk-env-secret-456" not in str(caught.value) and "***" in str(caught.value)
 
 
+@sdk
 def test_env_key_only_goes_to_openai(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env-secret-456")
     transport, calls = mock(GOOD)
@@ -250,11 +270,13 @@ def test_env_key_only_goes_to_openai(monkeypatch):
     assert calls[-1].headers["authorization"] == "Bearer sk-env-secret-456"
 
 
+@sdk
 def test_missing_key_for_openai():
     with pytest.raises(BackendUnavailable, match="OPENAI_API_KEY is not set"):
         DecisionClient.openai(transport=mock(GOOD)[0]).evaluate("x", QUESTIONS)
 
 
+@sdk
 def test_instructions_required_and_request_validation():
     c, calls = client(GOOD)
     with pytest.raises(InvalidRequest, match='needs "instructions"'):
@@ -262,21 +284,6 @@ def test_instructions_required_and_request_validation():
     with pytest.raises(InvalidRequest, match='"questions" must be a nonempty object.'):
         c.evaluate("x", {})
     assert calls == []
-
-
-def test_dict_questions_and_unverified_limits_are_not_enforced():
-    # 1 level and 300 choices are sent as given: OpenAI's docs state no limits (see docs/decisions-api.md).
-    c, calls = client({"answers": [{"type": "refusal", "name": "q"}, {"type": "refusal", "name": "s"}]})
-    many = {f"c{i}": None for i in range(300)}
-    c.evaluate(
-        "x",
-        {
-            "q": {"type": "choice", "instructions": "Pick", "criteria": many},
-            "s": Score(instructions="s", criteria=["only"]),
-        },
-    )
-    sent = json.loads(calls[0].content)["questions"]
-    assert len(sent[0]["choices"]) == 300 and len(sent[1]["levels"]) == 1
 
 
 def test_systemone_through_the_same_client(monkeypatch):
@@ -319,7 +326,7 @@ def test_library_import_pulls_in_no_server_or_extras():
     code = (
         "import sys, typed_decisions\n"
         "from typed_decisions import DecisionClient\n"
-        "DecisionClient.openai(api_key='k'); DecisionClient.systemone(api_key='k')\n"
+        "DecisionClient.systemone(api_key='k')\n"
         "bad = [m for m in ('fastapi', 'uvicorn', 'openai', 'torch', 'transformers', 'typed_decisions.server',"
         " 'typed_decisions.router', 'typed_decisions.cli') if m in sys.modules]\n"
         "print(bad)"
@@ -330,6 +337,7 @@ def test_library_import_pulls_in_no_server_or_extras():
 
 @pytest.mark.live
 @pytest.mark.skipif(not LIVE_KEY, reason="billed: set TD_LIVE=1 and OPENAI_API_KEY")
+@sdk
 def test_live_openai_decisions():
     out = DecisionClient.openai(api_key=LIVE_KEY).evaluate("I was charged twice for my order.", QUESTIONS)
     assert set(out) == set(QUESTIONS)
@@ -338,7 +346,13 @@ def test_live_openai_decisions():
 def _chain_text(error: BaseException) -> str:
     import traceback
 
-    return "".join(traceback.format_exception(error))
+    text = "".join(traceback.format_exception(error))
+    seen, node = [], error
+    while node is not None and node not in seen:  # a raw walk, as code that inspects the chain would do
+        seen.append(node)
+        text += repr(node.args) + str(node)
+        node = node.__cause__ or node.__context__
+    return text
 
 
 def test_systemone_explicit_key_not_in_traceback():
@@ -359,6 +373,7 @@ def test_systemone_explicit_key_not_in_traceback():
 
 
 @pytest.mark.parametrize("provider", ["openai", "systemone"])
+@sdk
 def test_named_api_key_env_value_is_scrubbed(monkeypatch, provider):
     secret = "my-own-named-secret-42"
     monkeypatch.setenv("MY_KEY", secret)
@@ -370,6 +385,7 @@ def test_named_api_key_env_value_is_scrubbed(monkeypatch, provider):
     assert secret not in str(caught.value) and secret not in _chain_text(caught.value)
 
 
+@sdk
 def test_openai_explicit_key_not_in_traceback():
     key = "sk-explicit-traceback-9"
 
@@ -379,3 +395,137 @@ def test_openai_explicit_key_not_in_traceback():
     with pytest.raises(BackendUnavailable) as caught:
         DecisionClient.openai(api_key=key, transport=httpx2.MockTransport(boom)).evaluate("x", QUESTIONS)
     assert key not in _chain_text(caught.value)
+
+
+def test_missing_sdk_has_a_clear_error(monkeypatch):
+    import builtins
+
+    real = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name == "openai" or name.startswith("openai."):
+            raise ImportError(name)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    with pytest.raises(BackendUnavailable, match=r"typed-decisions\[openai-decisions\]"):
+        DecisionClient.openai(api_key="sk-x-123456")
+
+
+def test_hosted_systemone_env_key_not_in_chain(monkeypatch):
+    secret = "ts-env-hosted-secret-77"
+    monkeypatch.setenv("TYPESAFE_API_KEY", secret)
+    transport, _ = mock({"error": {"message": f"bad key {secret}"}}, 500)
+    with pytest.raises(BackendFailed) as caught:
+        DecisionClient.systemone(transport=transport).evaluate("x", QUESTIONS)
+    assert secret not in _chain_text(caught.value)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+@sdk
+@pytest.mark.parametrize(
+    "questions, message",
+    [
+        ({"q": Choice(instructions="?", criteria={"only": None})}, "2 to 255 choices, got 1"),
+        ({"q": Choice(instructions="?", criteria={f"c{i}": None for i in range(256)})}, "2 to 255 choices, got 256"),
+        ({"q": Score(instructions="?", criteria=["one"])}, "2 to 10 score levels, got 1"),
+        ({"q": Score(instructions="?", criteria=[str(i) for i in range(11)])}, "2 to 10 score levels, got 11"),
+    ],
+)
+def test_confirmed_limits_are_enforced_locally(questions, message):
+    c, calls = client(GOOD)
+    with pytest.raises(InvalidRequest, match=message):
+        c.evaluate("x", questions)
+    assert calls == []
+
+
+@sdk
+def test_limits_at_the_boundary_are_sent():
+    reply = {"answers": [{"type": "refusal", "name": "a"}, {"type": "refusal", "name": "b"}]}
+    c, calls = client(reply)
+    c.evaluate(
+        "x",
+        {
+            "a": Choice(instructions="?", criteria={f"c{i}": None for i in range(255)}),
+            "b": Score(instructions="?", criteria=[str(i) for i in range(10)]),
+        },
+    )
+    sent = json.loads(calls[0].content)["questions"]
+    assert len(sent[0]["choices"]) == 255 and len(sent[1]["levels"]) == 10
+
+
+@sdk
+def test_duplicates_are_rejected_before_sending(monkeypatch):
+    from typed_decisions.answers import parse
+    from typed_decisions.backends import openai_decisions
+
+    request = parse({"model": "m", "state": "x", "questions": {"q": {"type": "noul", "instructions": "?"}}})
+    twice = request.model_copy(update={"questions": {**request.questions, "r": request.questions["q"]}})
+    monkeypatch.setattr(openai_decisions, "question", lambda key, q: {"type": "noul", "name": "same"})
+    with pytest.raises(InvalidRequest, match="names must be unique"):
+        openai_decisions.body(twice, "m")
+    pair = {"type": "choice", "name": "q", "choices": [{"value": "a"}, {"value": "a"}]}
+    monkeypatch.setattr(openai_decisions, "question", lambda key, q: pair)
+    with pytest.raises(InvalidRequest, match="choice values must be unique"):
+        openai_decisions.body(request, "m")
+
+
+@sdk
+@pytest.mark.parametrize("status", [204, 205])
+def test_no_content_statuses_fail(status):
+    with pytest.raises(BackendFailed, match=f"HTTP {status}"):
+        client(b"", status)[0].evaluate("x", QUESTIONS)
+
+
+@sdk
+def test_streamed_cap_stops_reading_early():
+    sent = []
+
+    def handle(request):
+        def chunks():
+            yield b'{"answers": [], "pad": "'
+            for _ in range(10_000):  # up to ~640 MiB if read to the end
+                sent.append(1)
+                yield b"x" * 65536
+
+        return httpx2.Response(200, content=chunks())
+
+    c = DecisionClient.openai(api_key="sk-test-explicit-123", transport=httpx2.MockTransport(handle))
+    with pytest.raises(BackendFailed, match="larger than"):
+        c.evaluate("x", QUESTIONS)
+    assert len(sent) < 200  # stopped soon after 10 MiB
+
+
+@sdk
+def test_total_deadline(monkeypatch):
+    import itertools
+
+    from typed_decisions.backends import openai_decisions
+
+    clock = itertools.count(0, 5.0)
+    monkeypatch.setattr(openai_decisions.time, "monotonic", lambda: next(clock))
+
+    def handle(request):
+        return httpx2.Response(200, content=iter([b'{"answers":', b" [] }"] * 3))
+
+    c = DecisionClient.openai(api_key="sk-test-explicit-123", timeout=7, transport=httpx2.MockTransport(handle))
+    with pytest.raises(BackendUnavailable, match="within 7 s"):
+        c.evaluate("x", QUESTIONS)
+
+
+@sdk
+def test_sdk_ignores_openai_env_for_other_urls(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-secret-456")
+    monkeypatch.setenv("OPENAI_ADMIN_KEY", "sk-admin-secret-789")
+    monkeypatch.setenv("OPENAI_ORG_ID", "org-abc")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-abc")
+    transport, calls = mock(GOOD)
+    DecisionClient.openai(base_url="http://127.0.0.1:9/v1", transport=transport).evaluate("x", QUESTIONS)
+    headers = calls[-1].headers
+    assert "authorization" not in headers
+    assert "openai-organization" not in headers and "openai-project" not in headers
+    assert "sk-" not in str(dict(headers))
+    DecisionClient.openai(transport=transport).evaluate("x", QUESTIONS)
+    assert calls[-1].headers["authorization"] == "Bearer sk-env-secret-456"
+    assert calls[-1].headers["openai-organization"] == "org-abc"
+    assert len(calls) == 2  # max_retries=0: one request per evaluation

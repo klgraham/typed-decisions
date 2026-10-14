@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typesafe_sdk import Choice, Noul, Score
 
 from typed_decisions import answers as _answers
-from typed_decisions.errors import MIN_SECRET_LENGTH, ServeError
+from typed_decisions.errors import MIN_SECRET_LENGTH, ServeError, scrub
 
 
 class NoulAnswer(BaseModel):
@@ -115,7 +115,7 @@ class DecisionClient:
         backend = OpenAIDecisions(
             model, base_url=base_url, api_key=api_key, api_key_env=api_key_env, timeout=timeout, transport=transport
         )
-        return cls(backend, model, "openai", api_key, api_key_env)
+        return cls(backend, model, "openai", api_key, backend.api_key_env)
 
     @classmethod
     def systemone(
@@ -145,7 +145,7 @@ class DecisionClient:
             transport=transport,
             api_key=api_key,
         )
-        return cls(backend, model, "systemone", api_key, api_key_env)
+        return cls(backend, model, "systemone", api_key, backend.key_env)
 
     def evaluate(
         self,
@@ -160,6 +160,8 @@ class DecisionClient:
                 key: q.model_dump(mode="json") if isinstance(q, BaseModel) else dict(q) for key, q in questions.items()
             },
         }
+        failure: ServeError | None = None
+        result: dict[str, Any] = {}
         try:
             request = _answers.parse(body)
             if self.provider == "openai":
@@ -167,11 +169,13 @@ class DecisionClient:
             else:
                 result = _answers.validate(request, self._backend.evaluate(request), self._backend.name)
         except ServeError as error:
-            secrets = self._secrets()
-            if not secrets:
-                raise
+            # Rebuilt and raised outside the except block, so neither __cause__ nor __context__ keeps the original,
+            # whose chain (upstream SDK errors) may still hold a key: the explicit one, a named api_key_env, or the
+            # default env key in use (TYPESAFE_API_KEY / OPENAI_API_KEY).
             message = error.args[0] if error.args else ""
-            for value in secrets:
+            for value in self._secrets():
                 message = message.replace(value, "***")
-            raise type(error)(message) from None  # the cause chain may still hold the key
+            failure = type(error)(scrub(message))
+        if failure is not None:
+            raise failure
         return {key: _typed(result["answers"][key]) for key in request.questions}
