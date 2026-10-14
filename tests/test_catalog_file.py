@@ -36,8 +36,8 @@ def test_secret_envs_come_from_json():
         "GOOGLE_API_KEY",
         "HF_TOKEN",
     )
+    from typed_decisions._server import SERVE_KEY_ENV
     from typed_decisions.launch import FORWARDED_SECRETS
-    from typed_decisions.server import SERVE_KEY_ENV
 
     assert {SERVE_KEY_ENV, *FORWARDED_SECRETS} <= set(errors.SECRET_ENVS)
 

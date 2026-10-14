@@ -5,12 +5,12 @@ from typing import Any
 import httpx2
 import pytest
 
+from typed_decisions._router import Router, checked
 from typed_decisions.answers import parse
 from typed_decisions.backends.systemone_http import SystemOneHTTP
 from typed_decisions.catalog import BY_ID
 from typed_decisions.compare import run
 from typed_decisions.errors import BackendFailed
-from typed_decisions.router import Router, checked
 
 GOOD = {
     "is_urgent": {"type": "noul", "noul": 0.9},

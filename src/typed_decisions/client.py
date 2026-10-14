@@ -1,9 +1,11 @@
-"""One library entry point for System One servers (hosted Jev, local upstreams) and the OpenAI Decisions API.
+"""The library's two clients: `JevClient` for any System One server (hosted Jev, or a `sys1 serve` server) and
+`DecisionsClient` for the OpenAI Decisions API. Both take the same questions and return the same typed answers.
 
-    from typed_decisions import Choice, DecisionClient, Noul
+    from typed_decisions import Choice, DecisionsClient, JevClient, Noul
 
-    client = DecisionClient.openai()                 # OPENAI_API_KEY, https://api.openai.com/v1, gpt-6-luna
-    client = DecisionClient.systemone()              # TYPESAFE_API_KEY, https://api.typesafe.ai, jev-latest
+    client = JevClient()                             # TYPESAFE_API_KEY, https://api.typesafe.ai, jev-latest
+    client = JevClient("kev-4b", base_url="http://127.0.0.1:8000")  # a running `sys1 serve`
+    client = DecisionsClient()                       # OPENAI_API_KEY, https://api.openai.com/v1, gpt-6-luna
     answers = client.evaluate("I was charged twice.", {"urgent": Noul(instructions="Is this urgent?")})
     answers["urgent"]                                # NoulAnswer(noul=0.81) or Refusal()
 
@@ -74,78 +76,22 @@ def _typed(raw: dict[str, Any]) -> NoulAnswer | ChoiceAnswer | ScoreAnswer | Ref
     )
 
 
-class DecisionClient:
-    """Evaluate questions against one backend. Build it with `openai()` or `systemone()`."""
+class _Client:
+    """What both clients share: one backend, `evaluate`, and scrubbed errors with no exception chain."""
 
-    def __init__(
-        self,
-        backend: Any,
-        model: str,
-        provider: Literal["openai", "systemone"],
-        secret: str | None,
-        secret_env: str | None = None,
-    ) -> None:
+    _provider: Literal["openai", "systemone"]
+
+    def __init__(self, backend: Any, model: str, secret: str | None, secret_env: str | None) -> None:
         self._backend = backend
         self.model = model
-        self.provider = provider
         self._secret = secret
         self._secret_env = secret_env
 
     def _secrets(self) -> list[str]:
-        """Key values this client may send that `errors.scrub` does not know: the explicit key and the value of a
-        named `api_key_env`. Values shorter than MIN_SECRET_LENGTH are not scrubbed (they would hit ordinary text)."""
+        """Key values this client may send that `errors.scrub` does not know: the explicit key and the value of the
+        key env in use. Values shorter than MIN_SECRET_LENGTH are not scrubbed (they would hit ordinary text)."""
         values = [self._secret or "", os.environ.get(self._secret_env, "").strip() if self._secret_env else ""]
         return [value for value in values if len(value) >= MIN_SECRET_LENGTH]
-
-    @classmethod
-    def openai(
-        cls,
-        model: str = "gpt-6-luna",
-        *,
-        base_url: str | None = None,
-        api_key: str | None = None,
-        api_key_env: str | None = None,
-        timeout: float = 60.0,
-        transport: httpx2.BaseTransport | None = None,
-    ) -> "DecisionClient":
-        """OpenAI Decisions. `base_url` defaults to OPENAI_BASE_URL, then https://api.openai.com/v1. The key is
-        `api_key`, else `api_key_env`; OPENAI_API_KEY is read only for OpenAI's own URL unless named explicitly."""
-        from typed_decisions.backends.openai_decisions import OpenAIDecisions
-
-        backend = OpenAIDecisions(
-            model, base_url=base_url, api_key=api_key, api_key_env=api_key_env, timeout=timeout, transport=transport
-        )
-        return cls(backend, model, "openai", api_key, backend.api_key_env)
-
-    @classmethod
-    def systemone(
-        cls,
-        model: str = "jev-latest",
-        *,
-        base_url: str | None = None,
-        api_key: str | None = None,
-        api_key_env: str | None = None,
-        timeout: float = 60.0,
-        transport: httpx2.BaseTransport | None = None,
-    ) -> "DecisionClient":
-        """A System One server. `base_url` defaults to hosted Jev (https://api.typesafe.ai), which requires a key:
-        `api_key`, else `api_key_env`, else TYPESAFE_API_KEY. TYPESAFE_API_KEY is read for another URL only if named."""
-        from typed_decisions.backends.systemone_http import JEV_KEY_ENV, SystemOneHTTP
-        from typed_decisions.catalog import TYPESAFE_URL
-
-        url = (base_url or TYPESAFE_URL).rstrip("/")
-        hosted = url == TYPESAFE_URL
-        backend = SystemOneHTTP(
-            model,
-            url,
-            model,
-            key_env=api_key_env or (JEV_KEY_ENV if hosted else None),
-            key_required=hosted,
-            timeout=timeout,
-            transport=transport,
-            api_key=api_key,
-        )
-        return cls(backend, model, "systemone", api_key, backend.key_env)
 
     def evaluate(
         self,
@@ -164,7 +110,7 @@ class DecisionClient:
         result: dict[str, Any] = {}
         try:
             request = _answers.parse(body)
-            if self.provider == "openai":
+            if self._provider == "openai":
                 result = self._backend.evaluate(request)
             else:
                 result = _answers.validate(request, self._backend.evaluate(request), self._backend.name)
@@ -179,3 +125,67 @@ class DecisionClient:
         if failure is not None:
             raise failure
         return {key: _typed(result["answers"][key]) for key in request.questions}
+
+
+class JevClient(_Client):
+    """A System One server: hosted Jev by default, or any `sys1 serve` server (or other System One upstream).
+
+    `base_url` defaults to hosted Jev (https://api.typesafe.ai), which requires a key: `api_key`, else `api_key_env`,
+    else TYPESAFE_API_KEY. TYPESAFE_API_KEY is read for another URL only if named. `timeout` is a total deadline for one
+    `evaluate` call, retries and the body read included; bodies over 10 MiB (decoded) fail."""
+
+    _provider = "systemone"
+
+    def __init__(
+        self,
+        model: str = "jev-latest",
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        api_key_env: str | None = None,
+        timeout: float = 60.0,
+        transport: httpx2.BaseTransport | None = None,
+    ) -> None:
+        from typed_decisions.backends.systemone_http import JEV_KEY_ENV, SystemOneHTTP
+        from typed_decisions.catalog import TYPESAFE_URL
+
+        url = (base_url or TYPESAFE_URL).rstrip("/")
+        hosted = url == TYPESAFE_URL
+        backend = SystemOneHTTP(
+            model,
+            url,
+            model,
+            key_env=api_key_env or (JEV_KEY_ENV if hosted else None),
+            key_required=hosted,
+            timeout=timeout,
+            transport=transport,
+            api_key=api_key,
+        )
+        super().__init__(backend, model, api_key, backend.key_env)
+
+
+class DecisionsClient(_Client):
+    """The OpenAI Decisions API, through the `openai` SDK (extra `typed-decisions[openai-decisions]`).
+
+    `base_url` defaults to OPENAI_BASE_URL, then https://api.openai.com/v1. The key is `api_key`, else `api_key_env`;
+    OPENAI_API_KEY is read only for OpenAI's own URL unless named explicitly. Without the extra this raises
+    BackendUnavailable naming it."""
+
+    _provider = "openai"
+
+    def __init__(
+        self,
+        model: str = "gpt-6-luna",
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        api_key_env: str | None = None,
+        timeout: float = 60.0,
+        transport: httpx2.BaseTransport | None = None,
+    ) -> None:
+        from typed_decisions.backends.openai_decisions import OpenAIDecisions
+
+        backend = OpenAIDecisions(
+            model, base_url=base_url, api_key=api_key, api_key_env=api_key_env, timeout=timeout, transport=transport
+        )
+        super().__init__(backend, model, api_key, backend.api_key_env)

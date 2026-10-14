@@ -6,11 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from typesafe_sdk import Noul, TypeSafeClient
 
+from typed_decisions._router import Router
+from typed_decisions._server import create_app
 from typed_decisions.answers import Request
 from typed_decisions.catalog import CATALOG
 from typed_decisions.errors import BackendUnavailable
-from typed_decisions.router import Router
-from typed_decisions.server import create_app
 
 
 class Echo:

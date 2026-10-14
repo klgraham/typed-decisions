@@ -30,13 +30,13 @@ import httpx2
 from typesafe_sdk import Choice, Noul, Score
 
 from typed_decisions.answers import EPSILON, Request, _probabilities, render
+from typed_decisions.backends._limits import MAX_BODY_BYTES
 from typed_decisions.errors import MIN_SECRET_LENGTH, BackendFailed, BackendUnavailable, InvalidRequest, scrub
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 OPENAI_KEY_ENV = "OPENAI_API_KEY"
 BASE_URL_ENV = "OPENAI_BASE_URL"
 DEFAULT_MODEL = "gpt-6-luna"
-MAX_BODY_BYTES = 10 * 1024 * 1024  # decoded bytes; far above any real answer set
 MIN_CHOICES, MAX_CHOICES = 2, 255  # OpenAI's limits, confirmed against the live API (400 outside them)
 MIN_LEVELS, MAX_LEVELS = 2, 10
 EXTRA_HINT = "install the extra: pip install 'typed-decisions[openai-decisions]' (or uv sync --extra openai-decisions)"

@@ -172,7 +172,7 @@ def test_a_body_that_does_not_decode_is_reported_as_not_json(content):
 def test_an_encoding_error_while_sending_does_not_pass_for_a_body_that_is_not_json():
     """Before L-r6-1 was fixed, a UnicodeEncodeError (a ValueError) raised while sending fell into the "not JSON" branch.
     Now it propagates as itself, and the router reports it as backend_failed under its own name."""
-    from typed_decisions.router import Router
+    from typed_decisions._router import Router
 
     def refuse(request: httpx2.Request) -> httpx2.Response:
         "caf\u00e9".encode("ascii")  # raises UnicodeEncodeError, as httpx2 did for a non-ASCII header value

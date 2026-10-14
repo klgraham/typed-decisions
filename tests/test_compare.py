@@ -2,8 +2,8 @@ import json
 
 from system_one_adapter.providers import ProviderResult
 
+from typed_decisions._router import Router
 from typed_decisions.compare import LLM, run, summarize
-from typed_decisions.router import Router
 
 
 class FakeProvider:

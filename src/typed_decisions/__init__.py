@@ -1,22 +1,26 @@
-"""Serve decision models through a System One-compatible API, and call them (or OpenAI Decisions) as a library.
+"""Two clients for typed decisions: `JevClient` (any System One server: hosted Jev, or one started with `sys1 serve`)
+and `DecisionsClient` (the OpenAI Decisions API). Both take TypeSafe's `Noul`, `Choice`, `Score` and return typed answers.
 
-`from typed_decisions import DecisionClient` imports no server or model-extra dependency.
+The names in `__all__` are the public API. Serving (the `sys1` CLI, its HTTP server, and choosing a backend by model
+name) is private: modules and names starting with `_`, and everything not exported here, may change in any release.
+Importing this package pulls in no server or model-extra dependency.
 """
 
 from typesafe_sdk import Choice, Noul, Score
 
-from typed_decisions.client import Answer, ChoiceAnswer, DecisionClient, NoulAnswer, Refusal, ScoreAnswer
+from typed_decisions.client import Answer, ChoiceAnswer, DecisionsClient, JevClient, NoulAnswer, Refusal, ScoreAnswer
 from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest, ServeError, UnknownModel
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "Answer",
     "BackendFailed",
     "BackendUnavailable",
     "Choice",
     "ChoiceAnswer",
-    "DecisionClient",
+    "DecisionsClient",
     "InvalidRequest",
+    "JevClient",
     "Noul",
     "NoulAnswer",
     "Refusal",

@@ -23,8 +23,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from typed_decisions import catalog
+from typed_decisions._router import Router, upstream_spec
 from typed_decisions.errors import InvalidRequest, ServeError, UnknownModel, scrub
-from typed_decisions.router import Router, upstream_spec
 
 PARTIAL = 5
 BACKLOG = 2048  # uvicorn's default
@@ -86,9 +86,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 def _ask_url(body: dict[str, Any], url: str) -> int:
     """Send to a running router (or any System One server) with the TypeSafe SDK, as any client would."""
+    from typed_decisions._server import SERVE_KEY_ENV
     from typed_decisions.answers import Request, parse
     from typed_decisions.backends.systemone_http import SystemOneHTTP
-    from typed_decisions.server import SERVE_KEY_ENV
 
     request: Request = parse(body)
     emit(SystemOneHTTP(url, url, None, key_env=SERVE_KEY_ENV).evaluate(request))
@@ -194,8 +194,8 @@ def _check_no_self_loop(router: Router, host: str, port: int) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    from typed_decisions._server import SERVE_KEY_ENV, create_app
     from typed_decisions.launch import is_loopback, launched
-    from typed_decisions.server import SERVE_KEY_ENV, create_app
 
     authenticated = bool(os.environ.get(SERVE_KEY_ENV, "").strip())
     exposed = not is_loopback(args.host)
@@ -259,7 +259,9 @@ def cmd_download(args: argparse.Namespace) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="td", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    root = argparse.ArgumentParser(
+        prog="sys1", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = root.add_subparsers(dest="command", required=True)
 
     sub.add_parser("models", help="List every model, its extra, hardware, URL, and readiness.").set_defaults(

@@ -15,9 +15,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from typed_decisions._router import Router
 from typed_decisions.backends.systemone_http import HOP_HEADER, MAX_HOPS, hop_chain
 from typed_decisions.errors import ServeError, scrub
-from typed_decisions.router import Router
 
 SERVE_KEY_ENV = "TYPED_DECISIONS_API_KEY"
 log = logging.getLogger("typed_decisions")
