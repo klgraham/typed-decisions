@@ -1,6 +1,5 @@
 """Route a System One body to the backend named by its `model`."""
 
-import dataclasses
 import threading
 import uuid
 from collections.abc import Iterable, Sequence
@@ -78,7 +77,7 @@ class Router:
     def evaluate(self, body: Any, via: Sequence[str] = ()) -> dict[str, Any]:
         """`via` is the hop chain the request arrived with (see `server`). This router adds itself, and a proxy backend
         sends the chain on, so an upstream that leads back here is refused instead of recursing."""
-        request = dataclasses.replace(answers.parse(body), via=(*via, self.instance))
+        request = answers.parse(body).model_copy(update={"via": (*via, self.instance)})
         return checked(self.backend(request.model), request, request.model)
 
     def models(self) -> dict[str, Any]:

@@ -81,7 +81,9 @@ def run(body: dict[str, Any], targets: list[str], router: Router) -> dict[str, A
         entry: dict[str, Any] = {"target": target}
         try:
             backend, model = resolve(target, router)
-            routed = answers.Request(model or request.model, request.state, request.questions, request.extra)
+            routed = answers.Request(
+                model=model or request.model, state=request.state, questions=request.questions, extra=request.extra
+            )
             entry["response"] = checked(backend, routed, target)
             entry["ok"] = True
         except ServeError as error:

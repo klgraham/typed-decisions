@@ -1,0 +1,299 @@
+{
+  "secret_envs": [
+    "TYPESAFE_API_KEY",
+    "TOGETHER_API_KEY",
+    "KEV_API_KEY",
+    "AUTOJEV_API_KEY",
+    "SHIM_TOKEN",
+    "TYPED_DECISIONS_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "HF_TOKEN"
+  ],
+  "models": [
+    {
+      "id": "jev-latest",
+      "kind": "hosted-jev",
+      "title": "Jev (jev-latest), hosted by TypeSafe",
+      "license": "TypeSafe terms of service",
+      "stack": "typesafe-sdk 0.7.2 -> api.typesafe.ai",
+      "hardware": "none (hosted)",
+      "url": "https://api.typesafe.ai",
+      "upstream_model": "jev-latest",
+      "auth_env": "TYPESAFE_API_KEY",
+      "notes": "jev-latest and jev-preview are aliases of jev-1.13.0. The key comes only from TYPESAFE_API_KEY."
+    },
+    {
+      "id": "jev-preview",
+      "kind": "hosted-jev",
+      "title": "Jev (jev-preview), hosted by TypeSafe",
+      "license": "TypeSafe terms of service",
+      "stack": "typesafe-sdk 0.7.2 -> api.typesafe.ai",
+      "hardware": "none (hosted)",
+      "url": "https://api.typesafe.ai",
+      "upstream_model": "jev-preview",
+      "auth_env": "TYPESAFE_API_KEY",
+      "notes": "jev-latest and jev-preview are aliases of jev-1.13.0. The key comes only from TYPESAFE_API_KEY."
+    },
+    {
+      "id": "jev-1.13.0",
+      "kind": "hosted-jev",
+      "title": "Jev (jev-1.13.0), hosted by TypeSafe",
+      "license": "TypeSafe terms of service",
+      "stack": "typesafe-sdk 0.7.2 -> api.typesafe.ai",
+      "hardware": "none (hosted)",
+      "url": "https://api.typesafe.ai",
+      "upstream_model": "jev-1.13.0",
+      "auth_env": "TYPESAFE_API_KEY",
+      "notes": "jev-latest and jev-preview are aliases of jev-1.13.0. The key comes only from TYPESAFE_API_KEY."
+    },
+    {
+      "id": "pplx-decider-v1-27b",
+      "kind": "systemone-http",
+      "title": "Perplexity pplx-decider-v1-27b",
+      "license": "Apache-2.0",
+      "stack": "autojev.server (bundled in the HF repo under source/) on torch 2.14.0 + transformers 5.17.0",
+      "hardware": "CUDA, ~49 GiB of weights plus working memory",
+      "hf_repo": "perplexity-ai/pplx-decider-v1-27b",
+      "hf_revision": "5117a6c7fe73b19308dc1a6b0fb529a40c2ecad4",
+      "extra": "pplx",
+      "probe_modules": [
+        "torch",
+        "transformers",
+        "fastapi"
+      ],
+      "url": "http://127.0.0.1:8101",
+      "upstream_model": "jev-latest",
+      "auth_env": "AUTOJEV_API_KEY",
+      "launch": [
+        {
+          "command": [
+            "{python}",
+            "-m",
+            "autojev.server"
+          ],
+          "ready_path": "/v1/models",
+          "env": {
+            "PYTHONPATH": "{snapshot}/source/src",
+            "AUTOJEV_CHECKPOINT": "{snapshot}",
+            "PORT": "{port}",
+            "AUTOJEV_HOST": "{host}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "openjev",
+      "kind": "systemone-http",
+      "title": "OpenJev",
+      "license": "CC-BY-NC-4.0 (weights); Apache-2.0 (helper and serve files)",
+      "stack": "vLLM 0.29.0 + helper/shim.py (one-token letter logprobs)",
+      "hardware": "CUDA: one H100 in FP8 as measured. MLX siblings on Apple silicon (text only); GGUF via llama.cpp",
+      "hf_repo": "openjev/openjev",
+      "hf_revision": "ac97900fd034fdd7e7e536f3d4c21b836cae0750",
+      "extra": "openjev",
+      "probe_modules": [
+        "vllm",
+        "openai",
+        "transformers"
+      ],
+      "url": "http://127.0.0.1:8765",
+      "upstream_model": "openjev",
+      "auth_env": "SHIM_TOKEN",
+      "launch": [
+        {
+          "command": [
+            "vllm",
+            "serve",
+            "{snapshot}",
+            "--host",
+            "127.0.0.1",
+            "--served-model-name",
+            "qwen",
+            "--port",
+            "8100",
+            "--enable-prefix-caching",
+            "--max-model-len",
+            "16384",
+            "--gpu-memory-utilization",
+            "0.90",
+            "--limit-mm-per-prompt",
+            "{{\"image\":1}}",
+            "--trust-remote-code",
+            "--max-num-seqs",
+            "256",
+            "--max-logprobs",
+            "64",
+            "--gdn-prefill-backend",
+            "triton",
+            "--quantization",
+            "fp8"
+          ],
+          "ready_path": "/health",
+          "port": 8100
+        },
+        {
+          "command": [
+            "{python}",
+            "{snapshot}/helper/shim.py",
+            "--host",
+            "{host}",
+            "--port",
+            "{port}"
+          ],
+          "ready_path": "/v1/version",
+          "env": {
+            "VLLM": "http://127.0.0.1:8100/v1",
+            "TOKENIZER": "{snapshot}",
+            "READOUT_T": "0.85",
+            "READOUT_NOUL_T": "1.829074",
+            "READOUT_NOUL_BIAS": "0",
+            "READOUT_TARGETED": "1",
+            "READOUT_INSTR_STYLE": "pyrepr",
+            "SHIM_STAGGER": "1"
+          },
+          "ipv6": false
+        }
+      ],
+      "notes": "Launch flags are the measured ones from serve/SERVE.md. The shim has no GET /v1/models; the router answers it."
+    },
+    {
+      "id": "tev1-4b-experimental",
+      "kind": "systemone-http",
+      "title": "Together Tev1-4B-experimental, via Ollama",
+      "license": "Not stated (fine-tune license being finalized); base Qwen3.5-4B is Apache-2.0",
+      "stack": "Ollama >= 0.35 /v1/systemone (model tev1)",
+      "hardware": "Whatever Ollama runs on: CPU, CUDA, or Apple silicon",
+      "hf_repo": "togethercomputer/Tev1-4B-experimental",
+      "hf_revision": "0b7becf017daa0e5eb222f8ce7483c8c8259c52f",
+      "url": "http://127.0.0.1:11434",
+      "upstream_model": "tev1",
+      "launch": [
+        {
+          "command": [
+            "ollama",
+            "serve"
+          ],
+          "ready_path": "/api/version",
+          "env": {
+            "OLLAMA_HOST": "{hostport}"
+          }
+        }
+      ],
+      "notes": "Run `ollama pull tev1` once, or set SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL to the tag you pulled (e.g. tev1:4b-q4_K_M). Ollama builds Tev1's prompt itself; inputs should stay under ~2,000 tokens."
+    },
+    {
+      "id": "tev1-4b-experimental@together",
+      "kind": "tev1-together",
+      "title": "Together Tev1-4B-experimental, via Together chat completions (adapted)",
+      "license": "Not stated (fine-tune license being finalized); base Qwen3.5-4B is Apache-2.0",
+      "stack": "Together chat completions, request shape from togethercomputer/tev1 examples/decide.py",
+      "hardware": "none (hosted by Together)",
+      "hf_repo": "togethercomputer/Tev1-4B-experimental",
+      "hf_revision": "0b7becf017daa0e5eb222f8ce7483c8c8259c52f",
+      "url": "https://api.together.ai/v1",
+      "upstream_model": "together/Tev1-4B-experimental",
+      "auth_env": "TOGETHER_API_KEY",
+      "notes": "Adapter: each question becomes 2-24 lettered options; probabilities come from top-5 letter logprobs, so with more than 5 options the rest get 0."
+    },
+    {
+      "id": "cua-s1-4b-0.2",
+      "kind": "cua",
+      "title": "Cua cua-s1-4b-0.2 (adapted)",
+      "license": "Apache-2.0 (adapter); base Qwen/Qwen3.5-4B governed by its own license",
+      "stack": "cua_s1.four_b.FourBModel (trycua/cua libs/cua-s1) LoRA on Qwen/Qwen3.5-4B",
+      "hardware": "PyTorch mps (measured on M1 Ultra) or CPU (measured); CUDA accepted, not measured",
+      "hf_repo": "cua-ai/cua-s1-4b-0.2",
+      "hf_revision": "16818868b0cc7813808aae4e87b417657046ab79",
+      "extra": "cua",
+      "probe_modules": [
+        "cua_s1.four_b",
+        "torch",
+        "transformers",
+        "peft"
+      ],
+      "notes": "Adapter: trained on computer-use element/action choices, so System One questions are out of its format."
+    },
+    {
+      "id": "kev-4b",
+      "kind": "systemone-http",
+      "title": "Kev-4B",
+      "license": "Apache-2.0",
+      "stack": "jaredpalmer/kev `python -m kev.serve` (FastAPI)",
+      "hardware": "CUDA bf16 with fused DeltaNet kernels (~16 GB free) or MLX on Apple silicon",
+      "hf_repo": "jaredpalmer/kev-4b",
+      "hf_revision": "6cfce5c2fa4b4bd64026336ab649c5ca78857d52",
+      "extra": "kev",
+      "probe_modules": [
+        "kev.serve",
+        "torch",
+        "transformers"
+      ],
+      "url": "http://127.0.0.1:8008",
+      "upstream_model": "kev-latest",
+      "auth_env": "KEV_API_KEY",
+      "launch": [
+        {
+          "command": [
+            "{python}",
+            "-m",
+            "kev.serve",
+            "--run",
+            "jaredpalmer/kev-4b@{revision}",
+            "--host",
+            "{host}",
+            "--port",
+            "{port}"
+          ],
+          "ready_path": "/v1/models"
+        }
+      ],
+      "notes": "kev.serve downloads the adapter and base on first run."
+    },
+    {
+      "id": "clef-flash",
+      "kind": "clef",
+      "title": "Cloudflare Clef-Flash (9B)",
+      "license": "Apache-2.0",
+      "stack": "joint_schema_model.py systemone() in process, transformers on CUDA",
+      "hardware": "CUDA (tested on one H200 with torch 2.11, transformers 5.10.2)",
+      "hf_repo": "Cloudflare/clef-flash",
+      "hf_revision": "17f0b0ad64efb65d273590632833508766b2aae6",
+      "extra": "clef",
+      "probe_modules": [
+        "torch",
+        "transformers",
+        "safetensors"
+      ],
+      "notes": "Hosted alternative: Workers AI @cf/cloudflare/clef-flash (not a /v1/systemone route; not wired here)."
+    },
+    {
+      "id": "clef",
+      "kind": "clef",
+      "title": "Cloudflare Clef (27B)",
+      "license": "Apache-2.0",
+      "stack": "joint_schema_model.py systemone() in process, transformers on CUDA",
+      "hardware": "CUDA (tested on one H200 with torch 2.11, transformers 5.10.2)",
+      "hf_repo": "Cloudflare/clef",
+      "hf_revision": "2f3de3dd85f379784083b0814d997ab627200f0c",
+      "extra": "clef",
+      "probe_modules": [
+        "torch",
+        "transformers",
+        "safetensors"
+      ],
+      "notes": "Hosted alternative: Workers AI @cf/cloudflare/clef (not a /v1/systemone route; not wired here)."
+    },
+    {
+      "id": "uniform-baseline",
+      "kind": "uniform",
+      "title": "Uniform baseline (no model)",
+      "license": "MIT (this repo)",
+      "stack": "built in",
+      "hardware": "none",
+      "notes": "Uniform probabilities. For contract checks without weights, and as a chance row in comparisons."
+    }
+  ]
+}
