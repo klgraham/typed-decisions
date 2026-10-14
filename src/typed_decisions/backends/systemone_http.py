@@ -82,8 +82,10 @@ class SystemOneHTTP:
         transport: httpx2.BaseTransport | None = None,
         label: str | None = None,
         hop: bool = False,
+        api_key: str | None = None,
     ) -> None:
         self.name = name
+        self.api_key = api_key  # library use (DecisionClient); wins over key_env
         self.base_url = base_url
         self.upstream_model = upstream_model
         self.key_env = key_env
@@ -128,6 +130,8 @@ class SystemOneHTTP:
         )
 
     def _api_key(self) -> str:
+        if self.api_key:
+            return self.api_key
         key = os.environ.get(self.key_env, "").strip() if self.key_env else ""
         if key:
             return key

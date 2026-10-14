@@ -70,6 +70,8 @@ Main cost: running a local model through the router means running the upstream s
 
 ## Shape
 
+- `client.py`: `DecisionClient`, the library entry point (`from typed_decisions import DecisionClient`), and the typed answers `NoulAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `Refusal`. Imports no server or model extra.
+- `backends/openai_decisions.py`: the OpenAI Decisions API over HTTP (library only; not routed). See `docs/decisions-api.md`.
 - `catalog.json`: the model table (id, HF repo, license, stack, hardware, extra, backend kind, default URL, upstream model name, auth env, launch commands) and `secret_envs`, the key variable names `errors.scrub` and launch env filtering use. Adding or retargeting a model is an edit to this file. Every `auth_env` must be listed in `secret_envs`, or the catalog fails to load.
 - Constructors are keyword-only: `Request`, `Option`, `ModelSpec`, and `Step` are Pydantic models (since #10), so `Option(key=..., description=...)`, not `Option("a", "b")`. Copy with `model_copy(update=...)` instead of `dataclasses.replace`. `Request` forbids unknown fields; `parse` moves body fields outside `state`/`model`/`questions` into `extra` before validating.
 - `catalog.py`: loads `catalog.json` through `importlib.resources` (so an installed wheel finds it) into Pydantic `ModelSpec`/`Step` models, and resolves URLs and model names. `explicit` (`--upstream` fields) is runtime state set in code, never in the JSON.
