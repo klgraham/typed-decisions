@@ -32,7 +32,7 @@ from typesafe_sdk import (
 
 from typed_decisions.answers import Request
 from typed_decisions.catalog import TYPESAFE_URL, ModelSpec
-from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest
+from typed_decisions.errors import MIN_SECRET_LENGTH, BackendFailed, BackendUnavailable, InvalidRequest, ServeError
 
 JEV_KEY_ENV = "TYPESAFE_API_KEY"
 NO_KEY = "local"
@@ -82,8 +82,10 @@ class SystemOneHTTP:
         transport: httpx2.BaseTransport | None = None,
         label: str | None = None,
         hop: bool = False,
+        api_key: str | None = None,
     ) -> None:
         self.name = name
+        self.api_key = api_key  # library use (DecisionClient); wins over key_env
         self.base_url = base_url
         self.upstream_model = upstream_model
         self.key_env = key_env
@@ -128,6 +130,8 @@ class SystemOneHTTP:
         )
 
     def _api_key(self) -> str:
+        if self.api_key:
+            return self.api_key
         key = os.environ.get(self.key_env, "").strip() if self.key_env else ""
         if key:
             return key
@@ -139,6 +143,21 @@ class SystemOneHTTP:
         return NO_KEY
 
     def evaluate(self, request: Request) -> dict[str, Any]:
+        if not self.api_key:
+            return self._evaluate(request)
+        failure: ServeError | None = None
+        try:
+            return self._evaluate(request)
+        except ServeError as error:
+            # An explicit key is not in SECRET_ENVS: scrub it from the message and raise a fresh error outside the
+            # except block, so neither __cause__ nor __context__ keeps upstream errors that may still carry it.
+            message = error.args[0] if error.args else ""
+            if len(self.api_key) >= MIN_SECRET_LENGTH:
+                message = message.replace(self.api_key, "***")
+            failure = type(error)(message)
+        raise failure
+
+    def _evaluate(self, request: Request) -> dict[str, Any]:
         api_key = self._api_key()
         model = self.upstream_model or request.model
         headers = None

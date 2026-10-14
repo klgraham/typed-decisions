@@ -12,6 +12,7 @@ requires-python = ">=3.12"
 dependencies = [
     "typesafe-sdk==0.7.2",
     "pydantic>=2.12,<3",
+    "httpx2>=2.13,<3",  # imported directly (client, Decisions backend, SystemOne backend)
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "huggingface-hub>=1.31",
@@ -19,9 +20,15 @@ dependencies = [
 
 [project.optional-dependencies]
 # LLM comparison through TypeSafe's adapter. Pick the provider you will call.
-llm-openai = ["system-one-adapter[openai]==0.2.1"]
+# Temporary freeze: "openai<3.25" keeps llm-openai on its tested 3.24.0; without it uv lock moves it to 3.31.0.
+# Lift once system-one-adapter[openai] is verified on openai>=3.25.
+llm-openai = ["system-one-adapter[openai]==0.2.1", "openai<3.25"]
 llm-anthropic = ["system-one-adapter[anthropic]==0.2.1"]
 llm-gemini = ["system-one-adapter[gemini]==0.2.1"]
+
+# OpenAI Decisions API through the official SDK (client.decisions.create first shipped in openai 3.26.0).
+# Declared conflicting below with the extras that pin an older openai.
+openai-decisions = ["openai>=3.26.0,<4"]
 
 # One local model per environment: these extras are declared mutually exclusive below
 # because their torch pins conflict (kev <2.9, pplx ==2.14.0, vLLM 0.29.0 -> 2.13.0).
@@ -93,6 +100,10 @@ conflicts = [
         { extra = "clef" },
         { extra = "cua" },
     ],
+    # openjev/openjev-mlx pin openai==3.16.2; llm-openai resolves 3.24.0 and stays there.
+    [{ extra = "openai-decisions" }, { extra = "openjev" }],
+    [{ extra = "openai-decisions" }, { extra = "openjev-mlx" }],
+    [{ extra = "openai-decisions" }, { extra = "llm-openai" }],
 ]
 
 [tool.pytest.ini_options]
@@ -112,7 +123,7 @@ include = ["src", "tests"]
 
 [tool.ty.analysis]
 # These model extras are optional and mutually exclusive; the core dev environment has neither.
-allowed-unresolved-imports = ["torch", "cua_s1.four_b"]
+allowed-unresolved-imports = ["torch", "cua_s1.four_b", "openai", "openai.resources.decisions"]
 
 [build-system]
 requires = ["hatchling"]

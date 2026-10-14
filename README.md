@@ -30,6 +30,30 @@ The API key comes only from the `TYPESAFE_API_KEY` environment variable. It is n
 
 An LLM can approximate the same decisions by generating tokens. `td compare` runs one question set against hosted Jev, any served decision model, and an LLM through [`system-one-adapter` 0.2.1](https://github.com/typesafe-ai/system-one-adapter-python), then lines the answers up per question.
 
+## Library use and the OpenAI Decisions API
+
+`typed_decisions` is also a client library. `DecisionClient` sends the same questions (the SDK's `Noul`, `Choice`, `Score`) to a System One server or to the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`POST /v1/decisions`, public beta, model `gpt-6-luna`) and returns typed answers keyed by question name. Importing it pulls in neither the server (FastAPI, uvicorn) nor any model extra, and `systemone()` needs no extra. `openai()` uses the official OpenAI SDK through the optional extra `typed-decisions[openai-decisions]` (`openai>=3.26.0`), which cannot be combined with the `openjev`, `openjev-mlx` or `llm-openai` extras because they pin older `openai` releases.
+
+```python
+from typed_decisions import Choice, DecisionClient, Noul, Refusal
+
+questions = {
+    "refund": Noul(instructions="Is this a refund request?"),
+    "team": Choice(instructions="Which team?", criteria={"billing": "Charges and refunds", "shipping": "Deliveries"}),
+}
+for client in (DecisionClient.openai(), DecisionClient.systemone()):  # OPENAI_API_KEY / TYPESAFE_API_KEY
+    answers = client.evaluate("I was charged twice.", questions)
+    team = answers["team"]
+    print(client.provider, answers["refund"], "refused" if isinstance(team, Refusal) else team.choice)
+```
+
+- Answers are `NoulAnswer`, `ChoiceAnswer`, `ScoreAnswer`, or `Refusal`. Decisions may refuse a single question; that comes back as `Refusal`, never as a made-up distribution. `confidence` is the API's own field, not the top probability.
+- `DecisionClient.openai(model="gpt-6-luna", base_url=None, api_key=None, api_key_env=None)`: `base_url` defaults to `OPENAI_BASE_URL`, then `https://api.openai.com/v1`. `OPENAI_API_KEY` is sent only to OpenAI's own URL; for any other URL pass `api_key=` or name `api_key_env=` explicitly, otherwise no key is sent.
+- `DecisionClient.systemone(model="jev-latest", base_url=None, api_key=None, api_key_env=None)`: defaults to hosted Jev with `TYPESAFE_API_KEY`; another URL (this router, a local upstream) gets that key only if named. Unlike the server and CLI, the library also accepts the key as an argument.
+- Errors are the package's own (`InvalidRequest`, `BackendUnavailable`, `BackendFailed`), with key values scrubbed. Decisions requires `instructions` on every question; a `state` that is not a string is sent as its JSON text.
+
+Mapping and what is verified against OpenAI's docs: [docs/decisions-api.md](docs/decisions-api.md).
+
 ## Weights
 
 This repo does not provide model weights. Download them with Hugging Face tooling (`td download <model>`, `hf download`, or the upstream server's own first-run download) and serve them locally. Licenses differ per model. Follow each model's license.
@@ -125,6 +149,7 @@ Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the 
 | Variable | Used for |
 | --- | --- |
 | `TYPESAFE_API_KEY` | hosted Jev, and nothing else |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | `DecisionClient.openai()` (library only); the key goes only to `https://api.openai.com/v1` unless named explicitly |
 | `TYPED_DECISIONS_API_KEY` | optional Bearer key this server requires; unset means open, which `serve` allows only on loopback unless `--allow-unauthenticated` |
 | `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL`; an `--upstream` URL wins over it |
 | `SYSTEMONE_<ID>_MODEL` | the model name sent to that upstream, e.g. `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL=tev1:4b-q4_K_M` for an Ollama tag other than `tev1`. Defaults: pplx `jev-latest`, OpenJev `openjev`, Ollama `tev1`, Kev `kev-latest`, Together `together/Tev1-4B-experimental`. `td models` shows each `model_env` and the name in effect. Hosted Jev ignores it, as it ignores `SYSTEMONE_<ID>_URL` |
