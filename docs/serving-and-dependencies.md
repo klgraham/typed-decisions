@@ -167,7 +167,7 @@ Checked against the live repos and cards. Where they differ from the review abov
 
 ## Pinned Hugging Face revisions
 
-Code from these snapshots runs on this machine (Clef's `joint_schema_model.py` in the router process; Perplexity's `source/src` and OpenJev's `helper/shim.py` as launched upstreams; vLLM with `--trust-remote-code` on the OpenJev snapshot), so every download is pinned to the commit below (`ModelSpec.hf_revision`, passed as `snapshot_download(revision=...)`; Kev as `kev.serve --run jaredpalmer/kev-4b@<sha>`). Recorded from the Hub API on 2026-10-04. To move a model forward, review the diff on the Hub and change the SHA in `catalog.py`.
+Code from these snapshots runs on this machine (Clef's `joint_schema_model.py` in the router process; Perplexity's `source/src` and OpenJev's `helper/shim.py` as launched upstreams; vLLM with `--trust-remote-code` on the OpenJev snapshot), so every download is pinned to the commit below (`ModelSpec.hf_revision`, passed as `snapshot_download(revision=...)`; Kev as `kev.serve --run jaredpalmer/kev-4b@<sha>`). Recorded from the Hub API on 2026-10-04. To move a model forward, review the diff on the Hub and change its `hf_revision` in `src/typed_decisions/catalog.json`.
 
 | Repo | Commit | Executed code |
 | --- | --- | --- |

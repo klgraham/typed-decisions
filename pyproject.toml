@@ -11,6 +11,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "typesafe-sdk==0.7.2",
+    "pydantic>=2.12,<3",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "huggingface-hub>=1.31",
@@ -81,6 +82,8 @@ dev = [
 ]
 
 [tool.uv]
+# Pin the uv that wrote uv.lock, so other versions do not rewrite its format (revision, markers).
+required-version = ">=0.12.24,<0.13"
 conflicts = [
     [
         { extra = "pplx" },

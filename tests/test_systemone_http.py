@@ -138,30 +138,26 @@ def test_hosted_jev_ignores_a_model_env_like_it_ignores_a_url_env(monkeypatch):
 
 
 def test_local_upstreams_get_the_hop_chain_and_hosted_jev_does_not(monkeypatch):
-    import dataclasses
-
     from typed_decisions.backends.systemone_http import HOP_HEADER
 
     transport, calls = recorder()
-    chain = dataclasses.replace(parse(REQUEST), via=("router-a", "router-b"))
+    chain = parse(REQUEST).model_copy(update={"via": ("router-a", "router-b")})
     SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport).evaluate(chain)
     SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport).evaluate(parse(REQUEST))  # no chain, no header
     assert [call.headers.get(HOP_HEADER) for call in calls] == ["router-a,router-b", None]
     monkeypatch.setenv("TYPESAFE_API_KEY", "dummy-test-key")  # a mock transport: nothing leaves the box
     transport, calls = recorder()
-    jev = dataclasses.replace(parse({**REQUEST, "model": "jev-latest"}), via=("router-a",))
+    jev = parse({**REQUEST, "model": "jev-latest"}).model_copy(update={"via": ("router-a",)})
     SystemOneHTTP.for_spec(BY_ID["jev-latest"], transport=transport).evaluate(jev)
     assert HOP_HEADER not in calls[0].headers
 
 
 def test_a_malformed_hop_chain_from_a_library_caller_is_refused_before_sending():
-    import dataclasses
-
     transport, calls = recorder()
     backend = SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport)
     for via in (("caf\u00e9",), ("ok", "a" * 65), ("a b",)):
         with pytest.raises(InvalidRequest, match="x-typed-decisions-via entry"):
-            backend.evaluate(dataclasses.replace(parse(REQUEST), via=via))
+            backend.evaluate(parse(REQUEST).model_copy(update={"via": via}))
     assert calls == []
 
 

@@ -4,21 +4,15 @@ Every message is scrubbed of the values of the keys this package handles, so an 
 error body cannot leak it to stdout or an HTTP response.
 """
 
+import json
 import os
 import re
+from importlib import resources
 
-SECRET_ENVS = (
-    "TYPESAFE_API_KEY",
-    "TOGETHER_API_KEY",
-    "KEV_API_KEY",
-    "AUTOJEV_API_KEY",
-    "SHIM_TOKEN",
-    "TYPED_DECISIONS_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "HF_TOKEN",
+# The key variables this package handles, from `secret_envs` in catalog.json. Only names live there; values are read
+# from the environment when scrubbing.
+SECRET_ENVS: tuple[str, ...] = tuple(
+    json.loads(resources.files("typed_decisions").joinpath("catalog.json").read_text(encoding="utf-8"))["secret_envs"]
 )
 MIN_SECRET_LENGTH = 6  # shorter values ("local", "1") would scrub ordinary words
 BEARER = re.compile(r"(Bearer\s+)[^\s'\",;]+", re.IGNORECASE)

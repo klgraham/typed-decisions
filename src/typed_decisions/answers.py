@@ -8,11 +8,10 @@ those options however their model does, and hand the probabilities back to `answ
 import json
 import math
 from collections.abc import Collection
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Annotated, Any
 
-from pydantic import Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from typesafe_sdk import Choice, Noul, Score
 from typesafe_sdk._schemas.models import (
     SystemOneResponse,  # the wire schema generated from api.typesafe.ai/openapi.json
@@ -21,20 +20,57 @@ from typesafe_sdk._schemas.models import (
 from typed_decisions.errors import BackendFailed, InvalidRequest
 
 Question = Annotated[Noul | Choice | Score, Field(discriminator="type")]
-_QUESTIONS = TypeAdapter(dict[str, Question])
 CONTRACT_FIELDS = ("state", "model", "questions")
 
 
-@dataclass(frozen=True)
-class Request:
+class Request(BaseModel):
     """A parsed System One request. `extra` keeps fields some upstreams accept (`images`, `options`). `via` lists the
-    routers it has already passed through (the hop header), so a proxy can pass the chain on."""
+    routers it has already passed through (the hop header), so a proxy can pass the chain on. `via` is not a body
+    field: the router sets it after `parse`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
     model: str
     state: Any
-    questions: dict[str, Noul | Choice | Score]
-    extra: dict[str, Any]
+    questions: dict[str, Question]
+    extra: dict[str, Any] = Field(default_factory=dict)
     via: tuple[str, ...] = ()
+
+    # Fields validate in declaration order, and each check raises InvalidRequest itself (pydantic lets exceptions
+    # that are not ValueError/AssertionError through unwrapped), so the first failure and its message match the
+    # hand-written checks this replaced.
+    @field_validator("model", mode="before")
+    @classmethod
+    def _model(cls, value: Any) -> Any:
+        if not isinstance(value, str) or not value:
+            raise InvalidRequest('"model" must be a nonempty string.')
+        return value
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def _state(cls, value: Any) -> Any:
+        if value is None:
+            raise InvalidRequest('"state" is required.')
+        if not isinstance(value, (str, dict, list)):
+            raise InvalidRequest('"state" must be a string, an object, or an array.')
+        return value
+
+    @field_validator("questions", mode="before")
+    @classmethod
+    def _questions_shape(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or not value:
+            raise InvalidRequest('"questions" must be a nonempty object.')
+        return value
+
+    @field_validator("questions", mode="after")
+    @classmethod
+    def _questions_nonempty(cls, value: dict[str, Noul | Choice | Score]) -> dict[str, Noul | Choice | Score]:
+        for key, question in value.items():
+            if isinstance(question, Choice) and not question.criteria:
+                raise InvalidRequest(f'Choice question "{key}" needs at least one option in "criteria".')
+            if isinstance(question, Score) and len(question.criteria) < 1:
+                raise InvalidRequest(f'Score question "{key}" needs at least one level in "criteria".')
+        return value
 
     def body(self, model: str | None = None) -> dict[str, Any]:
         return {
@@ -45,42 +81,28 @@ class Request:
         }
 
 
-@dataclass(frozen=True)
-class Option:
+class Option(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     key: str
     description: str
 
 
 def parse(body: Any) -> Request:
+    """Validate a request body as a `Request`. Every failure is an InvalidRequest (422); no ValidationError escapes."""
     if not isinstance(body, dict):
         raise InvalidRequest("The request body must be a JSON object.")
-    model = body.get("model")
-    if not isinstance(model, str) or not model:
-        raise InvalidRequest('"model" must be a nonempty string.')
-    if body.get("state") is None:
-        raise InvalidRequest('"state" is required.')
-    if not isinstance(body["state"], (str, dict, list)):
-        raise InvalidRequest('"state" must be a string, an object, or an array.')
-    questions = body.get("questions")
-    if not isinstance(questions, dict) or not questions:
-        raise InvalidRequest('"questions" must be a nonempty object.')
-    try:
-        parsed = _QUESTIONS.validate_python(questions)
-    except ValidationError as error:
-        raise InvalidRequest(
-            f"Invalid question: {error.errors(include_url=False)[0]['msg']} at {_loc(error)}"
-        ) from error
-    for key, question in parsed.items():
-        if isinstance(question, Choice) and not question.criteria:
-            raise InvalidRequest(f'Choice question "{key}" needs at least one option in "criteria".')
-        if isinstance(question, Score) and len(question.criteria) < 1:
-            raise InvalidRequest(f'Score question "{key}" needs at least one level in "criteria".')
+    fields = {name: body.get(name) for name in CONTRACT_FIELDS}
     extra = {key: value for key, value in body.items() if key not in CONTRACT_FIELDS}
-    return Request(model=model, state=body["state"], questions=parsed, extra=extra)
+    try:
+        return Request.model_validate({**fields, "extra": extra})
+    except ValidationError as error:
+        first = error.errors(include_url=False)[0]
+        raise InvalidRequest(f"Invalid question: {first['msg']} at {_loc(first)}") from error
 
 
-def _loc(error: ValidationError) -> str:
-    return "questions." + ".".join(str(part) for part in error.errors(include_url=False)[0]["loc"])
+def _loc(first: Any) -> str:
+    return ".".join(str(part) for part in first["loc"])
 
 
 def render(value: Any) -> str:
@@ -95,12 +117,16 @@ def options(question: Noul | Choice | Score) -> list[Option]:
     if isinstance(question, Noul):
         criteria = question.criteria or {}
         return [
-            Option("true", render(criteria.get("true")) or "Yes"),
-            Option("false", render(criteria.get("false")) or "No"),
+            Option(key="true", description=render(criteria.get("true")) or "Yes"),
+            Option(key="false", description=render(criteria.get("false")) or "No"),
         ]
     if isinstance(question, Choice):
-        return [Option(key, render(description) or key) for key, description in question.criteria.items()]
-    return [Option(str(level), render(description)) for level, description in enumerate(question.criteria)]
+        return [
+            Option(key=key, description=render(description) or key) for key, description in question.criteria.items()
+        ]
+    return [
+        Option(key=str(level), description=render(description)) for level, description in enumerate(question.criteria)
+    ]
 
 
 def answer(question: Noul | Choice | Score, probabilities: dict[str, float]) -> dict[str, Any]:

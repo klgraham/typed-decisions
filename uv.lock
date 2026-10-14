@@ -5809,6 +5809,7 @@ dependencies = [
     { name = "fastapi", version = "0.141.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin' or extra == 'extra-15-typed-decisions-clef' or extra == 'extra-15-typed-decisions-cua' or extra == 'extra-15-typed-decisions-kev' or extra != 'extra-15-typed-decisions-openjev' or (extra == 'extra-15-typed-decisions-openjev' and extra == 'extra-15-typed-decisions-openjev-mlx') or (extra == 'extra-15-typed-decisions-openjev' and extra == 'extra-15-typed-decisions-pplx')" },
     { name = "huggingface-hub", version = "1.31.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-15-typed-decisions-clef' and extra == 'extra-15-typed-decisions-cua') or (extra == 'extra-15-typed-decisions-clef' and extra == 'extra-15-typed-decisions-kev') or (extra == 'extra-15-typed-decisions-clef' and extra == 'extra-15-typed-decisions-openjev') or (extra == 'extra-15-typed-decisions-clef' and extra == 'extra-15-typed-decisions-openjev-mlx') or (extra == 'extra-15-typed-decisions-cua' and extra == 'extra-15-typed-decisions-kev') or (extra == 'extra-15-typed-decisions-cua' and extra == 'extra-15-typed-decisions-openjev') or (extra == 'extra-15-typed-decisions-cua' and extra == 'extra-15-typed-decisions-openjev-mlx') or (extra == 'extra-15-typed-decisions-kev' and extra == 'extra-15-typed-decisions-openjev') or (extra == 'extra-15-typed-decisions-kev' and extra == 'extra-15-typed-decisions-openjev-mlx') or (extra == 'extra-15-typed-decisions-openjev' and extra == 'extra-15-typed-decisions-openjev-mlx') or (extra != 'extra-15-typed-decisions-openjev-mlx' and extra == 'extra-15-typed-decisions-pplx') or (extra != 'extra-15-typed-decisions-clef' and extra != 'extra-15-typed-decisions-cua' and extra != 'extra-15-typed-decisions-kev' and extra != 'extra-15-typed-decisions-openjev' and extra == 'extra-15-typed-decisions-pplx')" },
     { name = "huggingface-hub", version = "1.32.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-15-typed-decisions-clef' or extra == 'extra-15-typed-decisions-cua' or extra == 'extra-15-typed-decisions-kev' or extra == 'extra-15-typed-decisions-openjev' or extra == 'extra-15-typed-decisions-openjev-mlx' or extra != 'extra-15-typed-decisions-pplx'" },
+    { name = "pydantic" },
     { name = "typesafe-sdk" },
     { name = "uvicorn" },
 ]
@@ -5886,6 +5887,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'openjev-mlx'", specifier = "==3.16.2" },
     { name = "pillow", marker = "extra == 'clef'" },
     { name = "pillow", marker = "extra == 'pplx'", specifier = "==12.3.0" },
+    { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "safetensors", marker = "extra == 'clef'" },
     { name = "safetensors", marker = "extra == 'pplx'", specifier = "==0.8.0" },
     { name = "system-one-adapter", extras = ["anthropic"], marker = "extra == 'llm-anthropic'", specifier = "==0.2.1" },

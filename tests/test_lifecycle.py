@@ -588,7 +588,7 @@ def test_a_signal_swallowed_inside_a_request_still_stops_serve():
 
 
 SIGNAL_DURING_DISPATCH = """\
-import asyncio, dataclasses, inspect, os, signal, sys
+import asyncio, inspect, os, signal, sys
 from pathlib import Path
 import uvicorn
 from typed_decisions import cli, launch
@@ -596,10 +596,10 @@ from typed_decisions.catalog import BY_ID, Step
 from typed_decisions.router import Router
 
 port, upstream_port, pid_file, should_launch, signum = sys.argv[1:]
-spec = dataclasses.replace(BY_ID['uniform-baseline'],
+spec = BY_ID['uniform-baseline'].model_copy(update=dict(
     url=f'http://127.0.0.1:{upstream_port}',
     launch=(Step(command=('{python}', '-m', 'typed_decisions.cli', 'serve',
-                          '--model', 'uniform-baseline', '--port', '{port}'), ready_path='/health'),))
+                          '--model', 'uniform-baseline', '--port', '{port}'), ready_path='/health'),)))
 cli.build_router = lambda args: Router([spec])
 real_start = launch.start
 def start(command, env):
