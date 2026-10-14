@@ -1,10 +1,10 @@
-"""The library's two clients: `JevClient` for any System One server (hosted Jev, or a `sys1 serve` server) and
+"""The library's two clients: `JevClient` for any System One server (hosted Jev, or a `td serve` server) and
 `DecisionsClient` for the OpenAI Decisions API. Both take the same questions and return the same typed answers.
 
     from typed_decisions import Choice, DecisionsClient, JevClient, Noul
 
     client = JevClient()                             # TYPESAFE_API_KEY, https://api.typesafe.ai, jev-latest
-    client = JevClient("kev-4b", base_url="http://127.0.0.1:8000")  # a running `sys1 serve`
+    client = JevClient("kev-4b", base_url="http://127.0.0.1:8000")  # a running `td serve`
     client = DecisionsClient()                       # OPENAI_API_KEY, https://api.openai.com/v1, gpt-6-luna
     answers = client.evaluate("I was charged twice.", {"urgent": Noul(instructions="Is this urgent?")})
     answers["urgent"]                                # NoulAnswer(noul=0.81) or Refusal()
@@ -128,7 +128,7 @@ class _Client:
 
 
 class JevClient(_Client):
-    """A System One server: hosted Jev by default, or any `sys1 serve` server (or other System One upstream).
+    """A System One server: hosted Jev by default, or any `td serve` server (or other System One upstream).
 
     `base_url` defaults to hosted Jev (https://api.typesafe.ai), which requires a key: `api_key`, else `api_key_env`,
     else TYPESAFE_API_KEY. TYPESAFE_API_KEY is read for another URL only if named. `timeout` is a total deadline for one

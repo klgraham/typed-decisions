@@ -179,4 +179,4 @@ Code from these snapshots runs on this machine (Clef's `joint_schema_model.py` i
 | jaredpalmer/kev-4b | `6cfce5c2fa4b4bd64026336ab649c5ca78857d52` | none (weights; code is the pinned `kev` git commit) |
 | togethercomputer/Tev1-4B-experimental | `0b7becf017daa0e5eb222f8ce7483c8c8259c52f` | none (served by Ollama or Together; recorded for reference) |
 
-Not pinned by this repo: the base models the upstreams fetch themselves (`Qwen/Qwen3.5-4B` for CUA through transformers; Kev reads `base_revision` from its own pinned config), and Ollama's `tev1` tag (to use another tag, such as `tev1:4b-q4_K_M`, set `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL`; every proxied model has a `SYSTEMONE_<ID>_MODEL` override, shown as `model_env` in `sys1 models`).
+Not pinned by this repo: the base models the upstreams fetch themselves (`Qwen/Qwen3.5-4B` for CUA through transformers; Kev reads `base_revision` from its own pinned config), and Ollama's `tev1` tag (to use another tag, such as `tev1:4b-q4_K_M`, set `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL`; every proxied model has a `SYSTEMONE_<ID>_MODEL` override, shown as `model_env` in `td models`).

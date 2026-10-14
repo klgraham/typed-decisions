@@ -77,8 +77,7 @@ cua = [
 ]
 
 [project.scripts]
-sys1 = "typed_decisions.cli:main"
-td = "typed_decisions.cli:main"  # the old name, kept as an alias
+td = "typed_decisions.cli:main"
 
 [dependency-groups]
 dev = [

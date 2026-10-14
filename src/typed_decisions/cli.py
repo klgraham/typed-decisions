@@ -1,4 +1,4 @@
-"""`sys1`: serve decision models over the System One API, and list, ask, compare, download.
+"""`td`: serve decision models over the System One API, and list, ask, compare, download.
 
 JSON on stdout; the exit code says what happened.
 
@@ -150,7 +150,7 @@ def _close(sockets: list[socket.socket]) -> None:
 def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -> None:
     """Serve on the sockets `_bind` already listens on. An OSError before startup is still reported as the port (2),
     though `_bind` leaves nothing for uvicorn to bind. Any other startup failure (uvicorn exits with its
-    STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app failing to start: a bug, 1, with
+    STARTUP_FAILURE, 3, which would read as td's backend unavailable) is the app failing to start: a bug, 1, with
     uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests;
     `stopped_by_exit_signals` requests shutdown without interrupting the event loop's callback dispatch."""
     import uvicorn
@@ -261,9 +261,7 @@ def cmd_download(args: argparse.Namespace) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(
-        prog="sys1", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    root = argparse.ArgumentParser(prog="td", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = root.add_subparsers(dest="command", required=True)
 
     sub.add_parser("models", help="List every model, its extra, hardware, URL, and readiness.").set_defaults(

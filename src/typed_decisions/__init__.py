@@ -1,7 +1,7 @@
-"""Two clients for typed decisions: `JevClient` (any System One server: hosted Jev, or one started with `sys1 serve`)
+"""Two clients for typed decisions: `JevClient` (any System One server: hosted Jev, or one started with `td serve`)
 and `DecisionsClient` (the OpenAI Decisions API). Both take TypeSafe's `Noul`, `Choice`, `Score` and return typed answers.
 
-The names in `__all__` are the public API. Serving (the `sys1` CLI, its HTTP server, and choosing a backend by model
+The names in `__all__` are the public API. Serving (the `td` CLI, its HTTP server, and choosing a backend by model
 name) is private: modules and names starting with `_`, and everything not exported here, may change in any release.
 Importing this package pulls in no server or model-extra dependency.
 """

@@ -13,11 +13,11 @@ One System One contract (`POST /v1/systemone`, `GET /v1/models`, optional `Autho
 ## Usage (caller's view)
 
 ```bash
-sys1 models                          # JSON: every model, its extra, hardware, readiness
-sys1 serve --port 8080               # the router; routes by body.model
-sys1 serve --model kev-4b --launch   # start kev.serve too, then route to it
-sys1 ask --model jev-latest questions.json
-sys1 compare questions.json -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini
+td models                            # JSON: every model, its extra, hardware, readiness
+td serve --port 8080                 # the router; routes by body.model
+td serve --model kev-4b --launch     # start kev.serve too, then route to it
+td ask --model jev-latest questions.json
+td compare questions.json -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini
 ```
 
 ```python
