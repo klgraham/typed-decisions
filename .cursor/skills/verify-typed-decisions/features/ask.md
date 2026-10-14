@@ -1,19 +1,19 @@
 # Ask
 
-`sys1 ask` sends one System One request and prints the answer as JSON: routed in this process by default, or to a running server with `--url`. The body comes from a file or stdin, `--model` overrides its `model`, and the exit code says what happened (0 ok, 2 bad input or unknown model, 3 backend unavailable, 4 backend failed).
+`td ask` sends one System One request and prints the answer as JSON: routed in this process by default, or to a running server with `--url`. The body comes from a file or stdin, `--model` overrides its `model`, and the exit code says what happened (0 ok, 2 bad input or unknown model, 3 backend unavailable, 4 backend failed).
 
 ## Sub-features
 
 - `ask-file` answers a request file in process.
 - `ask-stdin` reads the body from stdin.
-- `ask-url` sends to a running `sys1 serve`.
+- `ask-url` sends to a running `td serve`.
 - `ask-upstream` routes an `--upstream` model in process.
 - `ask-errors` gives exit 2 for an unknown model or invalid JSON and exit 3 for hosted Jev without a key.
 
 ## How to get to it (user POV)
 
-- Run `sys1 ask <request.json> [--model ID] [--url http://127.0.0.1:PORT] [--upstream NAME=URL#MODEL]`.
-- Pipe a body in: `sys1 ask --model ID < request.json` (or `sys1 ask - ...`).
+- Run `td ask <request.json> [--model ID] [--url http://127.0.0.1:PORT] [--upstream NAME=URL#MODEL]`.
+- Pipe a body in: `td ask --model ID < request.json` (or `td ask - ...`).
 
 ## Driving it with verify.py
 
@@ -31,5 +31,5 @@ Preconditions:
 ## Gotchas
 
 - `examples/support-ticket.json` names `jev-latest`; without `--model` it needs a key and exits 3 here. That is the negative case, not a failure.
-- `--url` sends to the server's `POST /v1/systemone`; with `SYSTEMONE_SERVE_API_KEY` set on that server, `ask --url` sends the same variable as the Bearer key, so pass it with `--env`.
+- `--url` sends to the server's `POST /v1/systemone`; with `TYPED_DECISIONS_API_KEY` set on that server, `ask --url` sends the same variable as the Bearer key, so pass it with `--env`.
 - `--model` overrides the body; without it the body's `model` is used.

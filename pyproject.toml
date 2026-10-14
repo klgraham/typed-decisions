@@ -1,5 +1,5 @@
 [project]
-name = "systemone-serve"
+name = "typed-decisions"
 version = "0.1.0"
 description = "Serve decision models through a System One-compatible API and compare them with hosted Jev and LLMs."
 readme = "README.md"
@@ -69,7 +69,7 @@ cua = [
 ]
 
 [project.scripts]
-sys1 = "systemone_serve.cli:main"
+td = "typed_decisions.cli:main"
 
 [dependency-groups]
 dev = [

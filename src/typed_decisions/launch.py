@@ -35,9 +35,9 @@ from ipaddress import ip_address
 from typing import Any
 from urllib.parse import urlparse
 
-from systemone_serve.backends._runtime import snapshot
-from systemone_serve.catalog import ModelSpec, Step
-from systemone_serve.errors import SECRET_ENVS, BackendUnavailable
+from typed_decisions.backends._runtime import snapshot
+from typed_decisions.catalog import ModelSpec, Step
+from typed_decisions.errors import SECRET_ENVS, BackendUnavailable
 
 READY_GRACE = 0.5  # seconds a child must stay alive after its first good answer
 STOP_TIMEOUT = 20.0  # total seconds all children get to exit after SIGTERM, before SIGKILL

@@ -18,7 +18,7 @@ from typesafe_sdk._schemas.models import (
     SystemOneResponse,  # the wire schema generated from api.typesafe.ai/openapi.json
 )
 
-from systemone_serve.errors import BackendFailed, InvalidRequest
+from typed_decisions.errors import BackendFailed, InvalidRequest
 
 Question = Annotated[Noul | Choice | Score, Field(discriminator="type")]
 _QUESTIONS = TypeAdapter(dict[str, Question])

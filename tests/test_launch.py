@@ -10,11 +10,11 @@ from typing import TypedDict, Unpack
 import pytest
 from conftest import free_port
 
-from systemone_serve.answers import parse
-from systemone_serve.backends.systemone_http import SystemOneHTTP
-from systemone_serve.catalog import BY_ID, ModelSpec, Step
-from systemone_serve.errors import BackendUnavailable
-from systemone_serve.launch import (
+from typed_decisions.answers import parse
+from typed_decisions.backends.systemone_http import SystemOneHTTP
+from typed_decisions.catalog import BY_ID, ModelSpec, Step
+from typed_decisions.errors import BackendUnavailable
+from typed_decisions.launch import (
     EXIT_SIGNALS,
     Terminated,
     check_launchable,
@@ -25,7 +25,7 @@ from systemone_serve.launch import (
     render_step,
 )
 
-SERVE = ("{python}", "-m", "systemone_serve.cli", "serve", "--model", "uniform-baseline", "--port", "{port}")
+SERVE = ("{python}", "-m", "typed_decisions.cli", "serve", "--model", "uniform-baseline", "--port", "{port}")
 
 
 class StepOptions(TypedDict, total=False):

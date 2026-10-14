@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from systemone_serve.answers import Request, answer, options, response
+from typed_decisions.answers import Request, answer, options, response
 
 
 class Uniform:

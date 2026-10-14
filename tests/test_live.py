@@ -11,8 +11,8 @@ import os
 
 import pytest
 
-from systemone_serve.catalog import CATALOG
-from systemone_serve.router import Router
+from typed_decisions.catalog import CATALOG
+from typed_decisions.router import Router
 
 pytestmark = pytest.mark.live
 QUESTION = {
@@ -60,7 +60,7 @@ def test_tev1_together():
     reason="OPENAI_API_KEY or the llm-openai extra missing",
 )
 def test_llm_through_adapter():
-    from systemone_serve.compare import run
+    from typed_decisions.compare import run
 
     model = os.environ.get("SYSTEMONE_LIVE_LLM_MODEL", "gpt-5-mini")
     result = run({**QUESTION, "model": "x"}, [f"llm:openai:{model}"], Router())

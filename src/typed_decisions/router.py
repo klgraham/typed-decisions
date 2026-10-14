@@ -6,10 +6,10 @@ import uuid
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from systemone_serve import answers
-from systemone_serve.backends import Backend, build
-from systemone_serve.catalog import CATALOG, ModelSpec
-from systemone_serve.errors import (
+from typed_decisions import answers
+from typed_decisions.backends import Backend, build
+from typed_decisions.catalog import CATALOG, ModelSpec
+from typed_decisions.errors import (
     BackendFailed,
     BackendUnavailable,
     ServeError,

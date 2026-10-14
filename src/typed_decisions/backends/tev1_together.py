@@ -15,9 +15,9 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from systemone_serve.answers import Request, answer, options, render, response
-from systemone_serve.catalog import ModelSpec, together_model
-from systemone_serve.errors import (
+from typed_decisions.answers import Request, answer, options, render, response
+from typed_decisions.catalog import ModelSpec, together_model
+from typed_decisions.errors import (
     BackendFailed,
     BackendUnavailable,
     InvalidRequest,
@@ -90,7 +90,7 @@ def _post(url: str, body: dict[str, Any], key: str) -> dict[str, Any]:
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-            "User-Agent": "systemone-serve/0.1",
+            "User-Agent": "typed-decisions/0.1",
         },
     )
     with urllib.request.urlopen(request, timeout=60) as reply:

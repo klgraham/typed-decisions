@@ -1,4 +1,4 @@
-# Design: systemone-serve
+# Design: typed-decisions
 
 ## Problem
 
@@ -13,11 +13,11 @@ One System One contract (`POST /v1/systemone`, `GET /v1/models`, optional `Autho
 ## Usage (caller's view)
 
 ```bash
-sys1 models                          # JSON: every model, its extra, hardware, readiness
-sys1 serve --port 8080               # the router; routes by body.model
-sys1 serve --model kev-4b --launch   # start kev.serve too, then route to it
-sys1 ask --model jev-latest questions.json
-sys1 compare questions.json -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini
+td models                          # JSON: every model, its extra, hardware, readiness
+td serve --port 8080               # the router; routes by body.model
+td serve --model kev-4b --launch   # start kev.serve too, then route to it
+td ask --model jev-latest questions.json
+td compare questions.json -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini
 ```
 
 ```python
@@ -74,7 +74,7 @@ Main cost: running a local model through the router means running the upstream s
 - `answers.py`: parse a body into SDK question models (`typesafe_sdk.Noul | Choice | Score`) at the boundary; `options(question)` and `answer(question, probabilities)`. Shared by every adapter.
 - `backends/`: `Backend` protocol `evaluate(body) -> response`, plus `systemone_http.py`, `clef.py`, `cua.py`, `tev1_together.py`, `uniform.py`. Heavy imports happen inside `load()`, so the core install needs no torch.
 - `router.py`: id to backend, `evaluate`, `models`. Raises `InvalidRequest`, `UnknownModel`, `BackendUnavailable`, `BackendFailed`; HTTP and CLI map those to status codes and exit codes in one place each.
-- `server.py`: FastAPI app over a `Router`, optional Bearer via `SYSTEMONE_SERVE_API_KEY`.
+- `server.py`: FastAPI app over a `Router`, optional Bearer via `TYPED_DECISIONS_API_KEY`.
 - `launch.py`: start upstream commands, wait for readiness, stop them on exit.
 - `compare.py`: run one body through several backends (catalog ids, `llm:<provider>:<model>` via `system-one-adapter`, or `url:<base>`), and report per-question agreement.
 - `cli.py`: `models`, `serve`, `ask`, `compare`, `download`. JSON on stdout, documented exit codes.

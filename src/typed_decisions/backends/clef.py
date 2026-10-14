@@ -6,10 +6,10 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from systemone_serve.answers import Request
-from systemone_serve.backends._runtime import import_torch, pick_device, snapshot
-from systemone_serve.catalog import ModelSpec
-from systemone_serve.errors import (
+from typed_decisions.answers import Request
+from typed_decisions.backends._runtime import import_torch, pick_device, snapshot
+from typed_decisions.catalog import ModelSpec
+from typed_decisions.errors import (
     BackendFailed,
     BackendUnavailable,
     ServeError,

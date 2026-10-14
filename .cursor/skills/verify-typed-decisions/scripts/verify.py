@@ -1,4 +1,4 @@
-"""Launch, check, drive, and clean up `sys1` for verification, keeping evidence that survives cleanup.
+"""Launch, check, drive, and clean up `td` for verification, keeping evidence that survives cleanup.
 
 Usage and the evidence layout are in ../SKILL.md; `verify.py <command> -h` lists each command's options. The repo is
 found from this file's location (override with VERIFY_REPO). Placeholders in `launch`/`cli` arguments and `--env`
@@ -24,7 +24,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve()
 REPO = Path(os.environ.get("VERIFY_REPO") or HERE.parents[4]).resolve()
-SKILL = "verify-systemone-serve"
+SKILL = "verify-typed-decisions"
 SCRATCH_ROOT = Path(os.environ.get("TMPDIR", "/tmp")) / SKILL
 ARTIFACT_ROOT = Path(os.environ.get("VERIFY_ARTIFACTS") or REPO / ".verify-artifacts" / SKILL)
 # Launched processes get only these from the agent env (plus LC_*), then whatever a step passes with --env.
@@ -88,7 +88,7 @@ def free_port(state: dict) -> int:
 
 def child_env(extra: list[str]) -> dict:
     """An allowlist, not a denylist: no key or token (GITHUB_TOKEN included), no SYSTEMONE_* override, and no proxy
-    variable (sys1's HTTP client honours them too, and all traffic here is loopback) reaches what the helper starts."""
+    variable (td's HTTP client honours them too, and all traffic here is loopback) reaches what the helper starts."""
     env = {k: v for k, v in os.environ.items() if k in ENV_ALLOW or k.startswith("LC_")}
     for item in extra:
         key, _, value = item.partition("=")
@@ -146,12 +146,12 @@ def command_of(pid: int) -> str:
 
 
 def ours(inst: dict) -> bool:
-    """The recorded pid is still the `sys1 serve` (or tap) this run started (pids get reused)."""
+    """The recorded pid is still the `td serve` (or tap) this run started (pids get reused)."""
     command = command_of(inst["pid"])
     words, port = command.split(), str(inst["port"])
     if inst.get("kind") == "tap":
         return "verify.py _tap" in command and port in words
-    return "systemone_serve.cli serve" in command and f" --port {port} " in f" {' '.join(words)} "  # whole tokens
+    return "typed_decisions.cli serve" in command and f" --port {port} " in f" {' '.join(words)} "  # whole tokens
 
 
 def http_get(url: str, timeout: float = 2.0) -> tuple[int, str]:
@@ -186,7 +186,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     evidence().mkdir(parents=True)
     git = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
     dirty = subprocess.run(["git", "-C", str(REPO), "status", "--porcelain"], capture_output=True, text=True, check=False)
-    pkg = subprocess.run([python(), "-c", "import systemone_serve as s; print(s.__version__, s.__file__)"],
+    pkg = subprocess.run([python(), "-c", "import typed_decisions as s; print(s.__version__, s.__file__)"],
                          capture_output=True, text=True, env=child_env([]), check=False).stdout.split()
     meta = {"run_id": rid, "repo": str(REPO), "git_head": git.stdout.strip() or "not a git checkout",
             "git_dirty_files": len(dirty.stdout.splitlines()) if git.returncode == 0 else None,
@@ -216,7 +216,7 @@ def cmd_launch(args: argparse.Namespace) -> None:
     serve_args = [expand(a, state, port) for a in args.serve_args]
     env = child_env([expand(e, state, port) for e in args.env])
     host = "127.0.0.1"
-    cmd = [python(), "-m", "systemone_serve.cli", "serve", "--host", host, "--port", str(port), *serve_args]
+    cmd = [python(), "-m", "typed_decisions.cli", "serve", "--host", host, "--port", str(port), *serve_args]
     _start(state, name, "serve", port, cmd, env, args.env, args.timeout)
 
 
@@ -336,13 +336,13 @@ def cmd_requests(args: argparse.Namespace) -> None:
     path = write_evidence(args.step, {"tap": args.name, "requests_seen": len(out), "requests": out[-5:],
                                       "checks": results, "ok": ok})
     print(json.dumps({"step": args.step, "requests_seen": len(out),
-                      "last_via": out[-1]["headers"].get("x-systemone-serve-via") if out else None,
+                      "last_via": out[-1]["headers"].get("x-typed-decisions-via") if out else None,
                       "ok": ok, "checks": results, "evidence": str(path)}, ensure_ascii=False))
     sys.exit(0 if ok else 1)
 
 
 def cmd_supervise(args: argparse.Namespace) -> None:
-    """Internal: run `sys1 serve` as a child so its exit code can be recorded after the launcher has exited."""
+    """Internal: run `td serve` as a child so its exit code can be recorded after the launcher has exited."""
     child = subprocess.Popen(args.cmd)
     Path(args.pidfile).write_text(str(child.pid))
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -354,7 +354,7 @@ def cmd_supervise(args: argparse.Namespace) -> None:
 def cmd_doctor(args: argparse.Namespace) -> None:
     state = load_state()
     report = {"run_id": run_id(), "repo": str(REPO), "python": python(), "instances": {}}
-    pkg = subprocess.run([python(), "-c", "import systemone_serve as s; print(s.__file__)"], capture_output=True,
+    pkg = subprocess.run([python(), "-c", "import typed_decisions as s; print(s.__file__)"], capture_output=True,
                          text=True, env=child_env([]), check=False).stdout.strip()
     report["package_from_repo"] = pkg.startswith(str(REPO / "src"))
     healthy = report["package_from_repo"]
@@ -385,7 +385,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
 
 def _events(text: str) -> list[dict]:
-    """sys1 prints indented JSON objects one after another; split them."""
+    """td prints indented JSON objects one after another; split them."""
     events, decoder, i = [], json.JSONDecoder(), 0
     while True:
         start = text.find("{", i)
@@ -438,9 +438,9 @@ def cmd_post(args: argparse.Namespace) -> None:
                                                 else json.dumps(body).encode())
     headers = [h.encode("utf-8") for h in args.header]
     if args.via is not None:
-        headers.append(b"x-systemone-serve-via: " + args.via.encode("utf-8"))
+        headers.append(b"x-typed-decisions-via: " + args.via.encode("utf-8"))
     if args.via_bytes is not None:
-        headers.append(b"x-systemone-serve-via: " + bytes.fromhex(args.via_bytes))
+        headers.append(b"x-typed-decisions-via: " + bytes.fromhex(args.via_bytes))
     started = time.monotonic()
     status, reply_headers, raw = _raw_http("127.0.0.1", inst["port"], args.method, args.path, headers, payload,
                                            args.timeout)
@@ -466,9 +466,9 @@ def cmd_cli(args: argparse.Namespace) -> None:
     state = load_state()
     port = free_port(state)
     save_state(state)
-    argv = [expand(a, state, port) for a in args.sys1_args]
+    argv = [expand(a, state, port) for a in args.td_args]
     env = child_env([expand(e, state, port) for e in args.env])
-    cmd = [python(), "-m", "systemone_serve.cli", *argv]
+    cmd = [python(), "-m", "typed_decisions.cli", *argv]
     stdin = (REPO / args.stdin).read_bytes() if args.stdin else b""
     started = time.monotonic()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, env=env,
@@ -487,7 +487,7 @@ def cmd_cli(args: argparse.Namespace) -> None:
     results = checks(args.check, {"out": out, "events": events, "code": code,
                                   "stderr": stderr.decode("utf-8", "replace")})
     ok = (args.expect_exit is None or code == args.expect_exit) and all(r["ok"] for r in results)
-    record = {"command": ["sys1", *argv], "env_added": [expand(e, state, port) for e in args.env],
+    record = {"command": ["td", *argv], "env_added": [expand(e, state, port) for e in args.env],
               "stdin": args.stdin, "exit_code": code, "seconds": seconds, "stdout": out,
               "stderr": stderr.decode("utf-8", "replace")[-4000:], "expect_exit": args.expect_exit,
               "checks": results, "ok": ok}
@@ -527,7 +527,7 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
                 except ProcessLookupError:
                     row["forced"] = "its process group is already gone"
         elif inst["pid"] and alive(inst["pid"]):
-            row["skipped"] = f"pid {inst['pid']} is no longer this run's sys1 serve; not touched"
+            row["skipped"] = f"pid {inst['pid']} is no longer this run's td serve; not touched"
         if not exit_file.exists() and inst.get("supervisor") and not alive(inst["supervisor"]):
             row["supervisor_gone"] = "its supervisor died first, so the exit code was not recorded"
         time.sleep(0.2)
@@ -572,7 +572,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init", help="start a run: prints `export VERIFY_RUN_ID=...` for eval").set_defaults(run=cmd_init)
     sub.add_parser("port", help="print a free port reserved for this run").set_defaults(run=cmd_port)
-    p = sub.add_parser("launch", help="start `sys1 serve` NAME on 127.0.0.1 and wait for /health")
+    p = sub.add_parser("launch", help="start `td serve` NAME on 127.0.0.1 and wait for /health")
     p.add_argument("name")
     p.add_argument("--port", type=int)
     p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
@@ -607,13 +607,13 @@ def main() -> None:
     p.add_argument("--body", help="request JSON file (default examples/support-ticket.json), or -")
     p.add_argument("--raw-body", help="send this text as the body, unparsed")
     p.add_argument("--header", action="append", default=[], metavar="'Name: value'")
-    p.add_argument("--via", help="x-systemone-serve-via value (UTF-8)")
-    p.add_argument("--via-bytes", help="x-systemone-serve-via value as hex bytes, e.g. 636166e9 for caf\\xe9")
+    p.add_argument("--via", help="x-typed-decisions-via value (UTF-8)")
+    p.add_argument("--via-bytes", help="x-typed-decisions-via value as hex bytes, e.g. 636166e9 for caf\\xe9")
     p.add_argument("--expect-status", type=int)
     p.add_argument("--check", action="append", default=[], help="Python expression over out, status")
     p.add_argument("--timeout", type=float, default=30.0)
     p.set_defaults(run=cmd_post)
-    p = sub.add_parser("cli", help="run one sys1 command with a scrubbed env and record it")
+    p = sub.add_parser("cli", help="run one td command with a scrubbed env and record it")
     p.add_argument("step")
     p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
     p.add_argument("--stdin", help="file (relative to the repo) to feed on stdin")
@@ -629,11 +629,11 @@ def main() -> None:
     sub.add_parser("evidence", help="print this run's evidence directory").set_defaults(run=cmd_evidence)
     argv = sys.argv[1:]
     rest: list[str] = []
-    if "--" in argv:  # everything after the first `--` goes to sys1 untouched
+    if "--" in argv:  # everything after the first `--` goes to td untouched
         cut = argv.index("--")
         argv, rest = argv[:cut], argv[cut + 1:]
     args = parser.parse_args(argv)
-    args.serve_args = args.cmd = args.sys1_args = rest
+    args.serve_args = args.cmd = args.td_args = rest
     if args.command in ("cli", "_supervise") and not rest:
         parser.error(f"{args.command} needs `-- <command and arguments>`")
     args.run(args)

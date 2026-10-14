@@ -6,11 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from typesafe_sdk import Noul, TypeSafeClient
 
-from systemone_serve.answers import Request
-from systemone_serve.catalog import CATALOG
-from systemone_serve.errors import BackendUnavailable
-from systemone_serve.router import Router
-from systemone_serve.server import create_app
+from typed_decisions.answers import Request
+from typed_decisions.catalog import CATALOG
+from typed_decisions.errors import BackendUnavailable
+from typed_decisions.router import Router
+from typed_decisions.server import create_app
 
 
 class Echo:
@@ -130,7 +130,7 @@ def test_typesafe_sdk_is_a_drop_in_client(running_router):
 
 
 def test_a_request_that_already_passed_through_this_router_is_refused():
-    from systemone_serve.backends.systemone_http import HOP_HEADER, MAX_HOPS
+    from typed_decisions.backends.systemone_http import HOP_HEADER, MAX_HOPS
 
     http, echo = client()
     assert (
@@ -154,7 +154,7 @@ def test_an_upstream_that_leads_back_to_the_router_fails_once_instead_of_recursi
     import httpx2
     from typesafe_sdk import RetryPolicy
 
-    from systemone_serve.backends.systemone_http import HOP_HEADER, SystemOneHTTP
+    from typed_decisions.backends.systemone_http import HOP_HEADER, SystemOneHTTP
 
     router = Router(specs=[], backends={})
     inner = TestClient(create_app(router, api_key=""))
@@ -188,7 +188,7 @@ def test_an_upstream_that_leads_back_to_the_router_fails_once_instead_of_recursi
 def test_a_non_ascii_hop_header_is_a_clean_422_not_a_502(raw):
     """L-r6-1: such a header could not be forwarded (header values are ASCII), and used to come back as a misleading
     502 "upstream body is not JSON" from a proxied model. Now the request is refused before any backend runs."""
-    from systemone_serve.backends.systemone_http import HOP_HEADER
+    from typed_decisions.backends.systemone_http import HOP_HEADER
 
     http, echo = client()
     reply = http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: raw})
@@ -212,7 +212,7 @@ def test_a_non_ascii_hop_header_is_a_clean_422_not_a_502(raw):
     ],
 )
 def test_a_malformed_hop_entry_is_refused_and_names_its_position(header, entry):
-    from systemone_serve.backends.systemone_http import HOP_HEADER
+    from typed_decisions.backends.systemone_http import HOP_HEADER
 
     http, echo = client()
     reply = http.post("/v1/systemone", json={**QUESTION, "model": "echo"}, headers={HOP_HEADER: header})
@@ -223,7 +223,7 @@ def test_a_malformed_hop_entry_is_refused_and_names_its_position(header, entry):
 
 
 def test_hop_entries_are_capped_in_length_and_empty_entries_are_ignored():
-    from systemone_serve.backends.systemone_http import HOP_ENTRY_MAX, HOP_HEADER
+    from typed_decisions.backends.systemone_http import HOP_ENTRY_MAX, HOP_HEADER
 
     http, echo = client()
     longest = "a" * HOP_ENTRY_MAX
@@ -244,7 +244,7 @@ def test_a_non_ascii_hop_header_on_a_proxied_model_never_reaches_the_upstream():
     """CR's r6 repro: the same header on a model served by a System One upstream (kev-4b here, over a mock)."""
     import httpx2
 
-    from systemone_serve.backends.systemone_http import HOP_HEADER, SystemOneHTTP
+    from typed_decisions.backends.systemone_http import HOP_HEADER, SystemOneHTTP
 
     sent: list[httpx2.Request] = []
 
@@ -278,7 +278,7 @@ def test_a_proxy_that_prepends_its_own_hop_line_cannot_hide_the_router():
     import httpx2
     from typesafe_sdk import RetryPolicy
 
-    from systemone_serve.backends.systemone_http import HOP_HEADER, SystemOneHTTP
+    from typed_decisions.backends.systemone_http import HOP_HEADER, SystemOneHTTP
 
     router = Router(specs=[], backends={})
     inner = TestClient(create_app(router, api_key=""))
@@ -311,7 +311,7 @@ def test_a_proxy_that_prepends_its_own_hop_line_cannot_hide_the_router():
 def test_every_hop_header_line_is_read_validated_and_forwarded_as_one_chain():
     import httpx2
 
-    from systemone_serve.backends.systemone_http import (
+    from typed_decisions.backends.systemone_http import (
         HOP_HEADER,
         MAX_HOPS,
         SystemOneHTTP,

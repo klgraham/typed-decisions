@@ -9,16 +9,16 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from systemone_serve import cli
-from systemone_serve.answers import parse
-from systemone_serve.backends.clef import Clef
-from systemone_serve.backends.systemone_http import SystemOneHTTP
-from systemone_serve.backends.tev1_together import Tev1Together
-from systemone_serve.catalog import BY_ID
-from systemone_serve.compare import run
-from systemone_serve.errors import BackendFailed, BackendUnavailable, InvalidRequest
-from systemone_serve.router import Router
-from systemone_serve.server import create_app
+from typed_decisions import cli
+from typed_decisions.answers import parse
+from typed_decisions.backends.clef import Clef
+from typed_decisions.backends.systemone_http import SystemOneHTTP
+from typed_decisions.backends.tev1_together import Tev1Together
+from typed_decisions.catalog import BY_ID
+from typed_decisions.compare import run
+from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest
+from typed_decisions.router import Router
+from typed_decisions.server import create_app
 
 CHOICE = {"state": "s", "questions": {"q": {"type": "choice", "criteria": {"a": None, "b": None}}}}
 
@@ -152,7 +152,7 @@ def test_models_survives_a_package_that_crashes_on_import(capsys, monkeypatch):
 
 SECRETS = {
     "TYPESAFE_API_KEY": "dummy-ts-key-123",
-    "SYSTEMONE_SERVE_API_KEY": "dummy-serve-key-456",
+    "TYPED_DECISIONS_API_KEY": "dummy-serve-key-456",
     "TOGETHER_API_KEY": "dummy-together-key-789",
 }
 LEAKY = (

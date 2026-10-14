@@ -7,9 +7,9 @@ system-one-adapter, or `url:<base_url>[#model]` for any other System One server.
 import time
 from typing import Any, Literal, cast
 
-from systemone_serve import answers
-from systemone_serve.backends import Backend
-from systemone_serve.errors import (
+from typed_decisions import answers
+from typed_decisions.backends import Backend
+from typed_decisions.errors import (
     BackendFailed,
     BackendUnavailable,
     InvalidRequest,
@@ -17,7 +17,7 @@ from systemone_serve.errors import (
     describe,
     scrub,
 )
-from systemone_serve.router import Router, checked, upstream_spec
+from typed_decisions.router import Router, checked, upstream_spec
 
 
 class LLM:
@@ -63,7 +63,7 @@ def resolve(target: str, router: Router) -> tuple[Backend, str | None]:
             raise InvalidRequest(f"LLM targets look like llm:<provider>:<model>, got {target!r}.")
         return LLM(provider, model), model
     if target.startswith("url:"):
-        from systemone_serve.backends.systemone_http import SystemOneHTTP
+        from typed_decisions.backends.systemone_http import SystemOneHTTP
 
         return SystemOneHTTP.for_spec(upstream_spec(target, target[4:]), relabel=False), None
     return router.backend(target), target

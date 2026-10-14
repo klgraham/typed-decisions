@@ -5,11 +5,11 @@ import json
 import httpx2
 import pytest
 
-from systemone_serve.answers import parse
-from systemone_serve.backends import build
-from systemone_serve.backends.systemone_http import SystemOneHTTP
-from systemone_serve.catalog import BY_ID
-from systemone_serve.errors import BackendFailed, BackendUnavailable, InvalidRequest
+from typed_decisions.answers import parse
+from typed_decisions.backends import build
+from typed_decisions.backends.systemone_http import SystemOneHTTP
+from typed_decisions.catalog import BY_ID
+from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest
 
 ANSWER = {
     "model": "kev-latest",
@@ -140,7 +140,7 @@ def test_hosted_jev_ignores_a_model_env_like_it_ignores_a_url_env(monkeypatch):
 def test_local_upstreams_get_the_hop_chain_and_hosted_jev_does_not(monkeypatch):
     import dataclasses
 
-    from systemone_serve.backends.systemone_http import HOP_HEADER
+    from typed_decisions.backends.systemone_http import HOP_HEADER
 
     transport, calls = recorder()
     chain = dataclasses.replace(parse(REQUEST), via=("router-a", "router-b"))
@@ -160,7 +160,7 @@ def test_a_malformed_hop_chain_from_a_library_caller_is_refused_before_sending()
     transport, calls = recorder()
     backend = SystemOneHTTP.for_spec(BY_ID["kev-4b"], transport=transport)
     for via in (("caf\u00e9",), ("ok", "a" * 65), ("a b",)):
-        with pytest.raises(InvalidRequest, match="x-systemone-serve-via entry"):
+        with pytest.raises(InvalidRequest, match="x-typed-decisions-via entry"):
             backend.evaluate(dataclasses.replace(parse(REQUEST), via=via))
     assert calls == []
 
@@ -176,7 +176,7 @@ def test_a_body_that_does_not_decode_is_reported_as_not_json(content):
 def test_an_encoding_error_while_sending_does_not_pass_for_a_body_that_is_not_json():
     """Before L-r6-1 was fixed, a UnicodeEncodeError (a ValueError) raised while sending fell into the "not JSON" branch.
     Now it propagates as itself, and the router reports it as backend_failed under its own name."""
-    from systemone_serve.router import Router
+    from typed_decisions.router import Router
 
     def refuse(request: httpx2.Request) -> httpx2.Response:
         "caf\u00e9".encode("ascii")  # raises UnicodeEncodeError, as httpx2 did for a non-ASCII header value
