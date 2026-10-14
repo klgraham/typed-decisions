@@ -1,4 +1,6 @@
-"""`td` (the typed-decisions CLI): list, serve, ask, compare, download. JSON on stdout; the exit code says what happened.
+"""`td`: serve decision models over the System One API, and list, ask, compare, download.
+
+JSON on stdout; the exit code says what happened.
 
 Exit codes:
   0  success
@@ -23,8 +25,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from typed_decisions import catalog
+from typed_decisions._router import Router, upstream_spec
 from typed_decisions.errors import InvalidRequest, ServeError, UnknownModel, scrub
-from typed_decisions.router import Router, upstream_spec
 
 PARTIAL = 5
 BACKLOG = 2048  # uvicorn's default
@@ -86,9 +88,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 def _ask_url(body: dict[str, Any], url: str) -> int:
     """Send to a running router (or any System One server) with the TypeSafe SDK, as any client would."""
+    from typed_decisions._server import SERVE_KEY_ENV
     from typed_decisions.answers import Request, parse
     from typed_decisions.backends.systemone_http import SystemOneHTTP
-    from typed_decisions.server import SERVE_KEY_ENV
 
     request: Request = parse(body)
     emit(SystemOneHTTP(url, url, None, key_env=SERVE_KEY_ENV).evaluate(request))
@@ -194,8 +196,8 @@ def _check_no_self_loop(router: Router, host: str, port: int) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    from typed_decisions._server import SERVE_KEY_ENV, create_app
     from typed_decisions.launch import is_loopback, launched
-    from typed_decisions.server import SERVE_KEY_ENV, create_app
 
     authenticated = bool(os.environ.get(SERVE_KEY_ENV, "").strip())
     exposed = not is_loopback(args.host)

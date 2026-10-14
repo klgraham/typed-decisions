@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 import uvicorn
 
-from typed_decisions.router import Router
-from typed_decisions.server import create_app
+from typed_decisions._router import Router
+from typed_decisions._server import create_app
 
 BODY = {
     "state": "Help! My payouts have been failing for 3 days.",

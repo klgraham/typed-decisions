@@ -2,14 +2,25 @@
 
 This repo's only purpose is to serve decision models through a System One-compatible API so they are easy to evaluate against hosted Jev and against LLMs.
 
-## Shared API
+## Usage
 
-The models do not all share one API. This repo wraps them so a client can call `POST /v1/systemone` and `GET /v1/models`, the System One routes TypeSafe documents for Jev. The router picks the backend from the request's `model`.
+1. Start the server with the CLI: `td serve` serves the models in its config (the catalog, plus any `--upstream`) on `POST /v1/systemone` and `GET /v1/models`, the System One routes TypeSafe documents for Jev. The server picks the backend from each request's `model`; that choice is internal to the server, not part of the library.
+2. Call it. Either send System One API calls to it (any HTTP client, or `typesafe-sdk`), or use one of the library's two clients:
+   - `JevClient`: any System One server, i.e. hosted Jev or a `td serve` server.
+   - `DecisionsClient`: the OpenAI Decisions API.
 
-- API docs: https://docs.typesafe.ai/api.md
-- Python client: [`typesafe-sdk` 0.7.2](https://github.com/typesafe-ai/typesafe-sdk-python)
+```bash
+td serve --model kev-4b --launch --port 8080
+```
 
-Point `TYPESAFE_BASE_URL` at this server and the same client talks to a local model:
+```python
+from typed_decisions import JevClient, Noul
+
+client = JevClient("kev-4b", base_url="http://127.0.0.1:8080")
+print(client.evaluate("I was charged twice.", {"refund": Noul(instructions="Refund request?")})["refund"])
+```
+
+The same server works with `typesafe-sdk` ([0.7.2](https://github.com/typesafe-ai/typesafe-sdk-python); API docs: https://docs.typesafe.ai/api.md):
 
 ```python
 from typesafe_sdk import Noul, TypeSafeClient
@@ -18,7 +29,9 @@ client = TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8080", model
 print(client.system_one(state="I was charged twice.", questions={"refund": Noul(instructions="Refund request?")}).nouls)
 ```
 
-Where a model already ships a System One server (Perplexity, OpenJev, Kev, Tev1 on Ollama), the router forwards to it. Only Clef, CUA, and Tev1 on Together are adapted in process. [docs/design.md](docs/design.md) explains why.
+Where a model already ships a System One server (Perplexity, OpenJev, Kev, Tev1 on Ollama), the server forwards to it. Only Clef, CUA, and Tev1 on Together are adapted in process. [docs/design.md](docs/design.md) explains why.
+
+Each upstream call the server makes has a total deadline that includes retries and reading the body: 60 s for hosted Jev and 300 s for local upstreams (`--upstream` and the catalog's System One servers). Past it the request fails with `backend_unavailable` (HTTP 503); a body over 10 MiB decoded (gzip included) fails with `backend_failed` (HTTP 502).
 
 ## Jev
 
@@ -30,29 +43,36 @@ The API key comes only from the `TYPESAFE_API_KEY` environment variable. It is n
 
 An LLM can approximate the same decisions by generating tokens. `td compare` runs one question set against hosted Jev, any served decision model, and an LLM through [`system-one-adapter` 0.2.1](https://github.com/typesafe-ai/system-one-adapter-python), then lines the answers up per question.
 
-## Library use and the OpenAI Decisions API
+## The library: `JevClient` and `DecisionsClient`
 
-`typed_decisions` is also a client library. `DecisionClient` sends the same questions (the SDK's `Noul`, `Choice`, `Score`) to a System One server or to the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions) (`POST /v1/decisions`, public beta, model `gpt-6-luna`) and returns typed answers keyed by question name. Importing it pulls in neither the server (FastAPI, uvicorn) nor any model extra, and `systemone()` needs no extra. `openai()` uses the official OpenAI SDK through the optional extra `typed-decisions[openai-decisions]` (`openai>=3.26.0`), which cannot be combined with the `openjev`, `openjev-mlx` or `llm-openai` extras because they pin older `openai` releases.
+The public API of `typed_decisions` is two clients plus the shared question and answer types: `JevClient` (System One HTTP: hosted Jev or a `td serve` server) and `DecisionsClient` (the [OpenAI Decisions API](https://developers.openai.com/api/docs/guides/decisions), `POST /v1/decisions`, public beta, model `gpt-6-luna`). Both take the SDK's `Noul`, `Choice`, `Score` and return typed answers keyed by question name. Importing the package pulls in neither the server (FastAPI, uvicorn) nor any model extra, and `JevClient` needs no extra. `DecisionsClient` uses the official OpenAI SDK through the optional extra `typed-decisions[openai-decisions]` (`openai>=3.26.0`), which cannot be combined with the `openjev`, `openjev-mlx` or `llm-openai` extras because they pin older `openai` releases. Everything else (the server, routing by model name, backends, the CLI) is internal and may change in any release.
 
 ```python
-from typed_decisions import Choice, DecisionClient, Noul, Refusal
+from typed_decisions import Choice, DecisionsClient, JevClient, Noul, Refusal
 
 questions = {
     "refund": Noul(instructions="Is this a refund request?"),
     "team": Choice(instructions="Which team?", criteria={"billing": "Charges and refunds", "shipping": "Deliveries"}),
 }
-for client in (DecisionClient.openai(), DecisionClient.systemone()):  # OPENAI_API_KEY / TYPESAFE_API_KEY
+for client in (DecisionsClient(), JevClient()):  # OPENAI_API_KEY / TYPESAFE_API_KEY
     answers = client.evaluate("I was charged twice.", questions)
     team = answers["team"]
-    print(client.provider, answers["refund"], "refused" if isinstance(team, Refusal) else team.choice)
+    print(client.model, answers["refund"], "refused" if isinstance(team, Refusal) else team.choice)
 ```
 
 - Answers are `NoulAnswer`, `ChoiceAnswer`, `ScoreAnswer`, or `Refusal`. Decisions may refuse a single question; that comes back as `Refusal`, never as a made-up distribution. `confidence` is the API's own field, not the top probability.
-- `DecisionClient.openai(model="gpt-6-luna", base_url=None, api_key=None, api_key_env=None)`: `base_url` defaults to `OPENAI_BASE_URL`, then `https://api.openai.com/v1`. `OPENAI_API_KEY` is sent only to OpenAI's own URL; for any other URL pass `api_key=` or name `api_key_env=` explicitly, otherwise no key is sent.
-- `DecisionClient.systemone(model="jev-latest", base_url=None, api_key=None, api_key_env=None)`: defaults to hosted Jev with `TYPESAFE_API_KEY`; another URL (this router, a local upstream) gets that key only if named. Unlike the server and CLI, the library also accepts the key as an argument.
-- Errors are the package's own (`InvalidRequest`, `BackendUnavailable`, `BackendFailed`), with key values scrubbed. Decisions requires `instructions` on every question; a `state` that is not a string is sent as its JSON text.
+- `DecisionsClient(model="gpt-6-luna", base_url=None, api_key=None, api_key_env=None)`: `base_url` defaults to `OPENAI_BASE_URL`, then `https://api.openai.com/v1`. `OPENAI_API_KEY` is sent only to OpenAI's own URL; for any other URL pass `api_key=` or name `api_key_env=` explicitly, otherwise no key is sent.
+- `JevClient(model="jev-latest", base_url=None, api_key=None, api_key_env=None)`: defaults to hosted Jev with `TYPESAFE_API_KEY`; another URL (a `td serve` server, a local upstream) gets that key only if named. Unlike the server and CLI, the library also accepts the key as an argument. `timeout` (default 60 s) is a total deadline for one call, retries and the body read included; bodies over 10 MiB decoded (gzip included) fail with `BackendFailed`.
+- Errors are the package's own (`InvalidRequest`, `BackendUnavailable`, `BackendFailed`), with key values scrubbed and no exception chain. Decisions requires `instructions` on every question; a `state` that is not a string is sent as its JSON text.
 
 Mapping and what is verified against OpenAI's docs: [docs/decisions-api.md](docs/decisions-api.md).
+
+### Breaking changes in 0.2.0
+
+- `DecisionClient` is gone: `DecisionClient.systemone(...)` is now `JevClient(...)` and `DecisionClient.openai(...)` is now `DecisionsClient(...)`, with the same arguments. The `provider` attribute is gone (use the class).
+- `typed_decisions.router` and `typed_decisions.server` are now private (`_router`, `_server`). Start the server with `td serve` instead of building a `Router` in code.
+- HTTP responses and error texts are unchanged.
+- System One calls (`JevClient` and the server's upstream calls) now treat `timeout` as a total deadline including the body read, and cap decoded bodies at 10 MiB.
 
 ## Weights
 
@@ -94,15 +114,15 @@ The model extras conflict with each other (Kev needs torch < 2.9, Perplexity pin
 The console command is `td` (`python -m typed_decisions.cli` runs the same thing). Every command prints JSON on stdout. Logs and upstream output go to stderr.
 
 ```bash
-td models                                         # every model: extra installed?, URL, auth env set?, hardware
-td serve --port 8080                              # route to all models (127.0.0.1 by default)
-td serve --model kev-4b --launch                  # start kev.serve on :8008, then route to it
-td ask examples/support-ticket.json               # route in this process, no server needed
-td ask --model kev-4b < request.json              # body from stdin, model overridden
-td ask request.json --url http://127.0.0.1:8080   # send to a running server
+td models                                           # every model: extra installed?, URL, auth env set?, hardware
+td serve --port 8080                                # route to all models (127.0.0.1 by default)
+td serve --model kev-4b --launch                    # start kev.serve on :8008, then route to it
+td ask examples/support-ticket.json                 # route in this process, no server needed
+td ask --model kev-4b < request.json                # body from stdin, model overridden
+td ask request.json --url http://127.0.0.1:8080     # send to a running server
 td compare examples/support-ticket.json \
     -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini -t uniform-baseline
-td download clef-flash                            # Hugging Face snapshot; prints the path
+td download clef-flash                              # Hugging Face snapshot; prints the path
 ```
 
 A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range, probabilities only for real options and summing to at most 1 plus a rounding allowance; an upstream that reports only its top-k options is fine). The allowance is half a unit in the last decimal place per reported option, at the precision the answer reports: the most decimals any of its values shows, counted as at least 2 (Jev reports 2, the OpenJev shim 4). It is never less than 0.02 and never more than 1, since rounding cannot push a sum past 2. A violation is `backend_failed`.
@@ -149,7 +169,7 @@ Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the 
 | Variable | Used for |
 | --- | --- |
 | `TYPESAFE_API_KEY` | hosted Jev, and nothing else |
-| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | `DecisionClient.openai()` (library only); the key goes only to `https://api.openai.com/v1` unless named explicitly |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | `DecisionsClient()` (library only); the key goes only to `https://api.openai.com/v1` unless named explicitly |
 | `TYPED_DECISIONS_API_KEY` | optional Bearer key this server requires; unset means open, which `serve` allows only on loopback unless `--allow-unauthenticated` |
 | `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL`; an `--upstream` URL wins over it |
 | `SYSTEMONE_<ID>_MODEL` | the model name sent to that upstream, e.g. `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL=tev1:4b-q4_K_M` for an Ollama tag other than `tev1`. Defaults: pplx `jev-latest`, OpenJev `openjev`, Ollama `tev1`, Kev `kev-latest`, Together `together/Tev1-4B-experimental`. `td models` shows each `model_env` and the name in effect. Hosted Jev ignores it, as it ignores `SYSTEMONE_<ID>_URL` |

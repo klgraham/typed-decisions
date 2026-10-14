@@ -2,7 +2,8 @@
 
 This covers hosted Jev and the upstream servers for Perplexity (autojev.server), OpenJev (helper/shim.py),
 Kev (kev.serve), Tev1 (Ollama), and any URL added with `--upstream`. The SDK does auth, retries, and structural
-validation; the router then checks the answers against the request (`answers.validate`). A local upstream's body is
+validation; every call has one total deadline (`timeout`, body read included) and a 10 MiB cap on the decoded body
+(`backends._limits`). The server then checks the answers against the request (`answers.validate`). A local upstream's body is
 returned as is, except that `model` becomes the router id and the upstream's own name moves to `upstream_model`.
 
 Every request to a local upstream carries `x-typed-decisions-via`: the routers it has passed through (`Request.via`,
@@ -31,6 +32,7 @@ from typesafe_sdk import (
 )
 
 from typed_decisions.answers import Request
+from typed_decisions.backends._limits import MAX_BODY_BYTES, BodyTooLarge, DeadlineExceeded, Limits
 from typed_decisions.catalog import TYPESAFE_URL, ModelSpec
 from typed_decisions.errors import MIN_SECRET_LENGTH, BackendFailed, BackendUnavailable, InvalidRequest, ServeError
 
@@ -85,7 +87,7 @@ class SystemOneHTTP:
         api_key: str | None = None,
     ) -> None:
         self.name = name
-        self.api_key = api_key  # library use (DecisionClient); wins over key_env
+        self.api_key = api_key  # library use (JevClient); wins over key_env
         self.base_url = base_url
         self.upstream_model = upstream_model
         self.key_env = key_env
@@ -164,6 +166,7 @@ class SystemOneHTTP:
         if self.hop and request.via:
             check_hops(request.via)  # a library caller's chain, too: only tokens are ever forwarded
             headers = {HOP_HEADER: ",".join(request.via)}
+        limits = Limits(self.timeout)  # one deadline for the whole call, retries and body included
         try:
             with TypeSafeClient(
                 api_key=api_key,
@@ -171,7 +174,7 @@ class SystemOneHTTP:
                 model=model,
                 retry=self.retry,
                 timeout=self.timeout,
-                transport=self.transport,
+                http_client=limits.client(self.transport),
             ) as client:
                 result = client.system_one(
                     request.state,
@@ -180,25 +183,39 @@ class SystemOneHTTP:
                     extra_body=request.extra or None,
                     extra_headers=headers,
                 )
+                if limits.oversized():
+                    raise BodyTooLarge(MAX_BODY_BYTES)
                 body = self._json(result.raw_http_response)
-        except TypeSafeAPIConnectionError as error:
+        except DeadlineExceeded as error:
+            raise BackendUnavailable(
+                f"{self.name}: {self.base_url} did not answer within {self.timeout:g} s. {self.hint}".strip()
+            ) from error
+        except BodyTooLarge as error:
+            raise BackendFailed(f"{self.name}: response body is larger than {MAX_BODY_BYTES} bytes.") from error
+        except TypeSafeError as error:
+            if limits.oversized():
+                raise BackendFailed(f"{self.name}: response body is larger than {MAX_BODY_BYTES} bytes.") from error
+            self._raise_mapped(error)
+        if self.label and isinstance(body, dict) and body.get("model") != self.label:
+            body = {**body, "model": self.label, "upstream_model": body.get("model")}
+        return body
+
+    def _raise_mapped(self, error: TypeSafeError) -> None:
+        """The SDK's errors as this package's, with the messages unchanged."""
+        if isinstance(error, TypeSafeAPIConnectionError):
             raise BackendUnavailable(
                 f"{self.name}: cannot reach {self.base_url} ({error}). {self.hint}".strip()
             ) from error
-        except (TypeSafeUnprocessableEntityError, TypeSafeBadRequestError) as error:
+        if isinstance(error, (TypeSafeUnprocessableEntityError, TypeSafeBadRequestError)):
             raise InvalidRequest(f"{self.name}: upstream rejected the request: {error}") from error
-        except TypeSafeAPIResponseValidationError as error:
+        if isinstance(error, TypeSafeAPIResponseValidationError):
             raise BackendFailed(f"{self.name}: answer is outside the System One contract: {error}") from error
-        except TypeSafeAPIError as error:
+        if isinstance(error, TypeSafeAPIError):
             if error.status in (401, 403):
                 who = self.key_env or "the request"
                 raise BackendUnavailable(f"{self.name}: upstream rejected {who} (HTTP {error.status}).") from error
             raise BackendFailed(f"{self.name}: upstream returned HTTP {error.status}: {error}") from error
-        except TypeSafeError as error:
-            raise BackendUnavailable(f"{self.name}: {error}") from error
-        if self.label and isinstance(body, dict) and body.get("model") != self.label:
-            body = {**body, "model": self.label, "upstream_model": body.get("model")}
-        return body
+        raise BackendUnavailable(f"{self.name}: {error}") from error
 
     def _json(self, response: httpx2.Response) -> Any:
         """Only a body that does not decode is "not JSON"; any other ValueError (an encoding error while sending, for

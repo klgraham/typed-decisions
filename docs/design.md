@@ -13,9 +13,9 @@ One System One contract (`POST /v1/systemone`, `GET /v1/models`, optional `Autho
 ## Usage (caller's view)
 
 ```bash
-td models                          # JSON: every model, its extra, hardware, readiness
-td serve --port 8080               # the router; routes by body.model
-td serve --model kev-4b --launch   # start kev.serve too, then route to it
+td models                            # JSON: every model, its extra, hardware, readiness
+td serve --port 8080                 # the router; routes by body.model
+td serve --model kev-4b --launch     # start kev.serve too, then route to it
 td ask --model jev-latest questions.json
 td compare questions.json -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini
 ```
@@ -44,7 +44,7 @@ Red-flag screen:
 The router owns the contract (request parsing, auth, `/v1/models`, error shape) and a catalog. Each catalog entry picks one of a few backend kinds:
 
 - `systemone-http`: forward the body to an upstream System One server through `typesafe-sdk` (kev.serve, autojev.server, the OpenJev shim, Ollama, Jeeves, or any URL). Hosted Jev is the same kind, with the base URL pinned to `api.typesafe.ai` and the key read from `TYPESAFE_API_KEY`.
-- `clef`: load `joint_schema_model.py` from the HF snapshot and call its own `systemone()`.
+- `clef`: load `joint_schema_model.py` from the HF snapshot and call its own `JevClient`.
 - `cua`: map each question to `FourBModel` options; one forward pass per question.
 - `tev1-together`: map each question to Tev1's lettered options and read the letter logprobs.
 - `uniform`: a no-weights baseline with uniform probabilities, used for contract checks and as a chance row in comparisons.
@@ -70,15 +70,16 @@ Main cost: running a local model through the router means running the upstream s
 
 ## Shape
 
-- `client.py`: `DecisionClient`, the library entry point (`from typed_decisions import DecisionClient`), and the typed answers `NoulAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `Refusal`. Imports no server or model extra.
+- `client.py`: the public API, `JevClient` and `DecisionsClient` (`from typed_decisions import JevClient, DecisionsClient`), and the typed answers `NoulAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `Refusal`. Imports no server or model extra.
 - `backends/openai_decisions.py`: the OpenAI Decisions API through the `openai` SDK, optional extra `openai-decisions` (library only; not routed). See `docs/decisions-api.md`.
 - `catalog.json`: the model table (id, HF repo, license, stack, hardware, extra, backend kind, default URL, upstream model name, auth env, launch commands) and `secret_envs`, the key variable names `errors.scrub` and launch env filtering use. Adding or retargeting a model is an edit to this file. Every `auth_env` must be listed in `secret_envs`, or the catalog fails to load.
 - Constructors are keyword-only: `Request`, `Option`, `ModelSpec`, and `Step` are Pydantic models (since #10), so `Option(key=..., description=...)`, not `Option("a", "b")`. Copy with `model_copy(update=...)` instead of `dataclasses.replace`. `Request` forbids unknown fields; `parse` moves body fields outside `state`/`model`/`questions` into `extra` before validating.
 - `catalog.py`: loads `catalog.json` through `importlib.resources` (so an installed wheel finds it) into Pydantic `ModelSpec`/`Step` models, and resolves URLs and model names. `explicit` (`--upstream` fields) is runtime state set in code, never in the JSON.
 - `answers.py`: `Request` and `Option` are frozen Pydantic models; `parse` validates a body as a `Request` (every failure is an `InvalidRequest`, 422) with questions as SDK models (`typesafe_sdk.Noul | Choice | Score`) at the boundary; `options(question)` and `answer(question, probabilities)`. Shared by every adapter.
 - `backends/`: `Backend` protocol `evaluate(body) -> response`, plus `systemone_http.py`, `clef.py`, `cua.py`, `tev1_together.py`, `uniform.py`. Heavy imports happen inside `load()`, so the core install needs no torch.
-- `router.py`: id to backend, `evaluate`, `models`. Raises `InvalidRequest`, `UnknownModel`, `BackendUnavailable`, `BackendFailed`; HTTP and CLI map those to status codes and exit codes in one place each.
-- `server.py`: FastAPI app over a `Router`, optional Bearer via `TYPED_DECISIONS_API_KEY`.
+- `_router.py` (private): id to backend, `evaluate`, `models`. Raises `InvalidRequest`, `UnknownModel`, `BackendUnavailable`, `BackendFailed`; HTTP and CLI map those to status codes and exit codes in one place each.
+- `backends/_limits.py`: one total deadline per upstream call (retries and body read included; 60 s hosted Jev, 300 s local upstreams) and a 10 MiB cap on decoded body bytes, via httpx2 event hooks.
+- `_server.py` (private): FastAPI app over a `Router`, optional Bearer via `TYPED_DECISIONS_API_KEY`.
 - `launch.py`: start upstream commands, wait for readiness, stop them on exit.
 - `compare.py`: run one body through several backends (catalog ids, `llm:<provider>:<model>` via `system-one-adapter`, or `url:<base>`), and report per-question agreement.
 - `cli.py`: `models`, `serve`, `ask`, `compare`, `download`. JSON on stdout, documented exit codes.

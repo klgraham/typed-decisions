@@ -8,6 +8,7 @@ import time
 from typing import Any, Literal, cast
 
 from typed_decisions import answers
+from typed_decisions._router import Router, checked, upstream_spec
 from typed_decisions.backends import Backend
 from typed_decisions.errors import (
     BackendFailed,
@@ -17,7 +18,6 @@ from typed_decisions.errors import (
     describe,
     scrub,
 )
-from typed_decisions.router import Router, checked, upstream_spec
 
 
 class LLM:

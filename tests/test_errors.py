@@ -10,6 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from typed_decisions import cli
+from typed_decisions._router import Router
+from typed_decisions._server import create_app
 from typed_decisions.answers import parse
 from typed_decisions.backends.clef import Clef
 from typed_decisions.backends.systemone_http import SystemOneHTTP
@@ -17,8 +19,6 @@ from typed_decisions.backends.tev1_together import Tev1Together
 from typed_decisions.catalog import BY_ID
 from typed_decisions.compare import run
 from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest
-from typed_decisions.router import Router
-from typed_decisions.server import create_app
 
 CHOICE = {"state": "s", "questions": {"q": {"type": "choice", "criteria": {"a": None, "b": None}}}}
 

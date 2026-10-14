@@ -1,4 +1,4 @@
-"""The OpenAI Decisions backend and the DecisionClient library entry point, with the network replaced by a mock."""
+"""The OpenAI Decisions backend and the JevClient and DecisionsClient, with the network replaced by a mock."""
 
 import json
 import os
@@ -13,8 +13,9 @@ from typed_decisions import (
     BackendUnavailable,
     Choice,
     ChoiceAnswer,
-    DecisionClient,
+    DecisionsClient,
     InvalidRequest,
+    JevClient,
     Noul,
     NoulAnswer,
     Refusal,
@@ -89,7 +90,7 @@ def _no_env(monkeypatch):
 def client(reply, status=200, **kwargs):
     transport, calls = mock(reply, status)
     kwargs.setdefault("api_key", "sk-test-explicit-123")
-    return DecisionClient.openai(transport=transport, **kwargs), calls
+    return DecisionsClient(transport=transport, **kwargs), calls
 
 
 @sdk
@@ -236,7 +237,7 @@ def test_connection_error():
     def boom(request):
         raise httpx2.ConnectError("refused")
 
-    c = DecisionClient.openai(api_key="sk-x-123456", transport=httpx2.MockTransport(boom))
+    c = DecisionsClient(api_key="sk-x-123456", transport=httpx2.MockTransport(boom))
     with pytest.raises(BackendUnavailable, match="cannot reach"):
         c.evaluate("x", QUESTIONS)
 
@@ -250,7 +251,7 @@ def test_keys_are_scrubbed(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env-secret-456")
     transport, _ = mock(echo, 500)
     with pytest.raises(BackendFailed) as caught:
-        DecisionClient.openai(transport=transport).evaluate("x", QUESTIONS)
+        DecisionsClient(transport=transport).evaluate("x", QUESTIONS)
     assert "sk-env-secret-456" not in str(caught.value) and "***" in str(caught.value)
 
 
@@ -258,22 +259,22 @@ def test_keys_are_scrubbed(monkeypatch):
 def test_env_key_only_goes_to_openai(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env-secret-456")
     transport, calls = mock(GOOD)
-    DecisionClient.openai(transport=transport).evaluate("x", QUESTIONS)
+    DecisionsClient(transport=transport).evaluate("x", QUESTIONS)
     assert calls[-1].headers["authorization"] == "Bearer sk-env-secret-456"
     # Another base URL (argument or OPENAI_BASE_URL) never gets OPENAI_API_KEY unless asked for by name.
-    DecisionClient.openai(base_url="http://127.0.0.1:9/v1", transport=transport).evaluate("x", QUESTIONS)
+    DecisionsClient(base_url="http://127.0.0.1:9/v1", transport=transport).evaluate("x", QUESTIONS)
     assert "authorization" not in calls[-1].headers and str(calls[-1].url) == "http://127.0.0.1:9/v1/decisions"
     monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.example/v1/")
-    DecisionClient.openai(transport=transport).evaluate("x", QUESTIONS)
+    DecisionsClient(transport=transport).evaluate("x", QUESTIONS)
     assert "authorization" not in calls[-1].headers and str(calls[-1].url) == "https://gateway.example/v1/decisions"
-    DecisionClient.openai(api_key_env="OPENAI_API_KEY", transport=transport).evaluate("x", QUESTIONS)
+    DecisionsClient(api_key_env="OPENAI_API_KEY", transport=transport).evaluate("x", QUESTIONS)
     assert calls[-1].headers["authorization"] == "Bearer sk-env-secret-456"
 
 
 @sdk
 def test_missing_key_for_openai():
     with pytest.raises(BackendUnavailable, match="OPENAI_API_KEY is not set"):
-        DecisionClient.openai(transport=mock(GOOD)[0]).evaluate("x", QUESTIONS)
+        DecisionsClient(transport=mock(GOOD)[0]).evaluate("x", QUESTIONS)
 
 
 @sdk
@@ -309,26 +310,24 @@ def test_systemone_through_the_same_client(monkeypatch):
     }
     transport, calls = mock(reply)
     with pytest.raises(BackendUnavailable, match="TYPESAFE_API_KEY is not set"):
-        DecisionClient.systemone(transport=transport).evaluate("x", QUESTIONS)
-    out = DecisionClient.systemone(api_key="ts-explicit-key", transport=transport).evaluate("x", QUESTIONS)
+        JevClient(transport=transport).evaluate("x", QUESTIONS)
+    out = JevClient(api_key="ts-explicit-key", transport=transport).evaluate("x", QUESTIONS)
     assert str(calls[-1].url).startswith("https://api.typesafe.ai/")
     assert calls[-1].headers["authorization"] == "Bearer ts-explicit-key"
     assert out["urgent"] == NoulAnswer(noul=0.7) and isinstance(out["severity"], ScoreAnswer)
     assert out["department"].choice == "technical"  # ty: ignore[unresolved-attribute]
     monkeypatch.setenv("TYPESAFE_API_KEY", "ts-env-secret-789")
-    DecisionClient.systemone(base_url="http://127.0.0.1:8008", model="kev-latest", transport=transport).evaluate(
-        "x", QUESTIONS
-    )
+    JevClient(base_url="http://127.0.0.1:8008", model="kev-latest", transport=transport).evaluate("x", QUESTIONS)
     assert "ts-env-secret-789" not in calls[-1].headers.get("authorization", "")
 
 
 def test_library_import_pulls_in_no_server_or_extras():
     code = (
         "import sys, typed_decisions\n"
-        "from typed_decisions import DecisionClient\n"
-        "DecisionClient.systemone(api_key='k')\n"
-        "bad = [m for m in ('fastapi', 'uvicorn', 'openai', 'torch', 'transformers', 'typed_decisions.server',"
-        " 'typed_decisions.router', 'typed_decisions.cli') if m in sys.modules]\n"
+        "from typed_decisions import DecisionsClient, JevClient\n"
+        "JevClient(api_key='k')\n"
+        "bad = [m for m in ('fastapi', 'uvicorn', 'openai', 'torch', 'transformers', 'typed_decisions._server',"
+        " 'typed_decisions._router', 'typed_decisions.cli') if m in sys.modules]\n"
         "print(bad)"
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
@@ -339,7 +338,7 @@ def test_library_import_pulls_in_no_server_or_extras():
 @pytest.mark.skipif(not LIVE_KEY, reason="billed: set TD_LIVE=1 and OPENAI_API_KEY")
 @sdk
 def test_live_openai_decisions():
-    out = DecisionClient.openai(api_key=LIVE_KEY).evaluate("I was charged twice for my order.", QUESTIONS)
+    out = DecisionsClient(api_key=LIVE_KEY).evaluate("I was charged twice for my order.", QUESTIONS)
     assert set(out) == set(QUESTIONS)
 
 
@@ -359,7 +358,7 @@ def test_systemone_explicit_key_not_in_traceback():
     key = "ts-explicit-secret-key-1"
     transport, _ = mock({"error": {"message": f"bad key {key}"}}, 500)
     with pytest.raises(BackendFailed) as caught:
-        DecisionClient.systemone(api_key=key, transport=transport).evaluate("x", QUESTIONS)
+        JevClient(api_key=key, transport=transport).evaluate("x", QUESTIONS)
     assert key not in str(caught.value) and key not in _chain_text(caught.value)
     # SystemOneHTTP used directly with api_key scrubs too.
     from typed_decisions.answers import parse
@@ -378,7 +377,7 @@ def test_named_api_key_env_value_is_scrubbed(monkeypatch, provider):
     secret = "my-own-named-secret-42"
     monkeypatch.setenv("MY_KEY", secret)
     transport, calls = mock({"error": {"message": f"echo {secret}"}}, 500)
-    make = DecisionClient.openai if provider == "openai" else DecisionClient.systemone
+    make = DecisionsClient if provider == "openai" else JevClient
     with pytest.raises(BackendFailed) as caught:
         make(base_url="http://127.0.0.1:9", api_key_env="MY_KEY", transport=transport).evaluate("x", QUESTIONS)
     assert calls[-1].headers["authorization"] == f"Bearer {secret}"
@@ -393,7 +392,7 @@ def test_openai_explicit_key_not_in_traceback():
         raise httpx2.ConnectError(f"refused {key}")
 
     with pytest.raises(BackendUnavailable) as caught:
-        DecisionClient.openai(api_key=key, transport=httpx2.MockTransport(boom)).evaluate("x", QUESTIONS)
+        DecisionsClient(api_key=key, transport=httpx2.MockTransport(boom)).evaluate("x", QUESTIONS)
     assert key not in _chain_text(caught.value)
 
 
@@ -409,7 +408,7 @@ def test_missing_sdk_has_a_clear_error(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", blocked)
     with pytest.raises(BackendUnavailable, match=r"typed-decisions\[openai-decisions\]"):
-        DecisionClient.openai(api_key="sk-x-123456")
+        DecisionsClient(api_key="sk-x-123456")
 
 
 def test_hosted_systemone_env_key_not_in_chain(monkeypatch):
@@ -417,7 +416,7 @@ def test_hosted_systemone_env_key_not_in_chain(monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", secret)
     transport, _ = mock({"error": {"message": f"bad key {secret}"}}, 500)
     with pytest.raises(BackendFailed) as caught:
-        DecisionClient.systemone(transport=transport).evaluate("x", QUESTIONS)
+        JevClient(transport=transport).evaluate("x", QUESTIONS)
     assert secret not in _chain_text(caught.value)
     assert caught.value.__cause__ is None and caught.value.__context__ is None
 
@@ -490,7 +489,7 @@ def test_streamed_cap_stops_reading_early():
 
         return httpx2.Response(200, content=chunks())
 
-    c = DecisionClient.openai(api_key="sk-test-explicit-123", transport=httpx2.MockTransport(handle))
+    c = DecisionsClient(api_key="sk-test-explicit-123", transport=httpx2.MockTransport(handle))
     with pytest.raises(BackendFailed, match="larger than"):
         c.evaluate("x", QUESTIONS)
     assert len(sent) < 200  # stopped soon after 10 MiB
@@ -508,7 +507,7 @@ def test_total_deadline(monkeypatch):
     def handle(request):
         return httpx2.Response(200, content=iter([b'{"answers":', b" [] }"] * 3))
 
-    c = DecisionClient.openai(api_key="sk-test-explicit-123", timeout=7, transport=httpx2.MockTransport(handle))
+    c = DecisionsClient(api_key="sk-test-explicit-123", timeout=7, transport=httpx2.MockTransport(handle))
     with pytest.raises(BackendUnavailable, match="within 7 s"):
         c.evaluate("x", QUESTIONS)
 
@@ -520,12 +519,12 @@ def test_sdk_ignores_openai_env_for_other_urls(monkeypatch):
     monkeypatch.setenv("OPENAI_ORG_ID", "org-abc")
     monkeypatch.setenv("OPENAI_PROJECT_ID", "proj-abc")
     transport, calls = mock(GOOD)
-    DecisionClient.openai(base_url="http://127.0.0.1:9/v1", transport=transport).evaluate("x", QUESTIONS)
+    DecisionsClient(base_url="http://127.0.0.1:9/v1", transport=transport).evaluate("x", QUESTIONS)
     headers = calls[-1].headers
     assert "authorization" not in headers
     assert "openai-organization" not in headers and "openai-project" not in headers
     assert "sk-" not in str(dict(headers))
-    DecisionClient.openai(transport=transport).evaluate("x", QUESTIONS)
+    DecisionsClient(transport=transport).evaluate("x", QUESTIONS)
     assert calls[-1].headers["authorization"] == "Bearer sk-env-secret-456"
     assert calls[-1].headers["openai-organization"] == "org-abc"
     assert len(calls) == 2  # max_retries=0: one request per evaluation

@@ -11,8 +11,8 @@ import os
 
 import pytest
 
+from typed_decisions._router import Router
 from typed_decisions.catalog import CATALOG
-from typed_decisions.router import Router
 
 pytestmark = pytest.mark.live
 QUESTION = {

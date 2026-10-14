@@ -402,7 +402,7 @@ def test_a_listener_that_gets_in_first_is_exit_2_not_uvicorns_3(capsys, monkeypa
 
 
 def test_a_startup_failure_that_is_not_the_port_is_exit_1_not_cannot_listen(capsys, monkeypatch):
-    from typed_decisions import server
+    from typed_decisions import _server as server
 
     async def fails_to_start(scope, receive, send):
         assert scope["type"] == "lifespan"
@@ -532,7 +532,7 @@ def test_sigterm_is_bounded_while_a_request_waits_on_a_hung_upstream():
 
 SWALLOWS_SIGNALS = """\
 import sys, time
-from typed_decisions import cli, server
+from typed_decisions import _server as server, cli
 
 real = server.create_app
 
@@ -593,7 +593,7 @@ from pathlib import Path
 import uvicorn
 from typed_decisions import cli, launch
 from typed_decisions.catalog import BY_ID, Step
-from typed_decisions.router import Router
+from typed_decisions._router import Router
 
 port, upstream_port, pid_file, should_launch, signum = sys.argv[1:]
 spec = BY_ID['uniform-baseline'].model_copy(update=dict(
