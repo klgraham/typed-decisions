@@ -80,5 +80,6 @@ def test_explicit_still_set_in_code(monkeypatch):
     assert spec.model_copy(update={"explicit": ()}).resolved_url() == "http://b"
 
 
-def test_py_typed_is_gone():
-    assert not resources.files("typed_decisions").joinpath("py.typed").is_file()
+def test_py_typed_is_shipped():
+    # Kept by Ken's decision on #11 (supersedes the delete item in #10).
+    assert resources.files("typed_decisions").joinpath("py.typed").is_file()
