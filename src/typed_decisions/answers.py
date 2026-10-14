@@ -28,7 +28,7 @@ class Request(BaseModel):
     routers it has already passed through (the hop header), so a proxy can pass the chain on. `via` is not a body
     field: the router sets it after `parse`."""
 
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
     model: str
     state: Any

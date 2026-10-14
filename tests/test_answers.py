@@ -1,7 +1,7 @@
 import pytest
 from typesafe_sdk import Choice, Noul, Score
 
-from typed_decisions.answers import Option, answer, options, parse
+from typed_decisions.answers import Option, Request, answer, options, parse
 from typed_decisions.errors import BackendFailed, InvalidRequest
 
 
@@ -134,3 +134,18 @@ def test_request_and_option_are_frozen_models():
         request.model = "other"  # ty: ignore[invalid-assignment]
     with pytest.raises(ValidationError):
         Option(key="a", description="b").key = "c"  # ty: ignore[invalid-assignment]
+
+
+def test_invalid_request_is_not_a_value_error():
+    # Request validators rely on pydantic passing non-ValueError exceptions through unwrapped.
+    assert not issubclass(InvalidRequest, ValueError) and not issubclass(InvalidRequest, AssertionError)
+
+
+def test_request_forbids_unknown_fields_but_parse_keeps_them_in_extra():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Request(model="m", state="s", questions={"q": Noul()}, images=[])  # ty: ignore[unknown-argument]
+    assert parse({"model": "m", "state": "s", "questions": {"q": {"type": "noul"}}, "images": [1]}).extra == {
+        "images": [1]
+    }
