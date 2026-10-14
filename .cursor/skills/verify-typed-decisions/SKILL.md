@@ -1,26 +1,29 @@
 ---
 name: verify-typed-decisions
-description: Drive typed-decisions (the `td` CLI and its System One HTTP API on POST /v1/systemone) the way a user does, and capture evidence that survives cleanup. Use to prove a change to td models/serve/ask/compare, the proxy path, or the self-loop and hop-header guards actually works end to end, with no API keys and no GPU.
+description: Drive typed-decisions through the td CLI, System One HTTP API, and public JevClient and DecisionsClient, capturing evidence that survives cleanup. Verify routing, clients, response limits, and loop guards with no real API keys and no GPU.
 ---
 
 # Verify typed-decisions
 
-typed-decisions is a router: `td serve` answers System One requests (`POST /v1/systemone`, `GET /v1/models`, `GET /health`) by model id, and the `td` CLI (`models`, `serve`, `ask`, `compare`, `download`) prints JSON on stdout with a meaningful exit code (0 ok, 1 bug, 2 bad input, 3 backend unavailable, 4 backend failed, 5 some compare targets failed, 129/130/143 serve stopped by a signal). The user surfaces are the CLI and the HTTP API; there is no UI.
+`td serve` answers System One requests (`POST /v1/systemone`, `GET /v1/models`, `GET /health`) by model id, and the `td` CLI (`models`, `serve`, `ask`, `compare`, `download`) prints JSON on stdout with a meaningful exit code (0 ok, 1 bug, 2 bad input, 3 backend unavailable, 4 backend failed, 5 some compare targets failed, 129/130/143 serve stopped by a signal). The user entry points are the CLI, HTTP API, and public Python clients; there is no UI.
 
 Everything here runs on a CPU-only machine with no keys. Nothing needs weights: `uniform-baseline` answers in process, and a second `td serve` acts as a real System One upstream for the proxy path (`--upstream NAME=URL#MODEL`), with the helper's recording tap in between when you need to see what was forwarded. Hosted Jev without `TYPESAFE_API_KEY` is a useful negative (exit 3 / `backend_unavailable`, nothing sent). Never put a real key in a verification run: every process the helper starts gets a minimal environment (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TERM`, `TMPDIR` from your shell) plus whatever a step passes with `--env` (dummy values only). No key, token, proxy variable, or `SYSTEMONE_*` override from your shell reaches them.
 
-The feature map in [`features/`](features/README.md) is the recipe book. Read its README, then the file for the feature you are proving.
+The public Python clients are `JevClient` and `DecisionsClient`. The client recipes use real HTTP, a real `td serve` for Jev, and local provider fixtures for Decisions and response limits. The feature map in [`features/`](features/README.md) is the recipe book. Read its README, then the file for the feature you are proving.
 
 ## Assumptions
 
 - Run every command from the repo root: `$S` is a relative path.
-- Use one persistent shell for a run. `eval "$($S init)"` exports `VERIFY_RUN_ID`, and some recipes keep values in shell variables (`P1`/`P2` in the ring step, `ID` in the multi-line hop step). In a fresh shell every command stops with "VERIFY_RUN_ID is not set"; find the run with `$S runs` and clean it with `VERIFY_RUN_ID=<id> $S cleanup`.
+- Use one persistent Bash shell for the documented `$S` commands. They rely on Bash word splitting; zsh's default `$S` expansion does not split a command string. `eval "$($S init)"` exports `VERIFY_RUN_ID`, and some recipes keep values in shell variables (`P1`/`P2` in the ring step, `ID` in the multi-line hop step). In a fresh shell every command stops with "VERIFY_RUN_ID is not set"; find the run with `$S runs` and clean it with `VERIFY_RUN_ID=<id> $S cleanup`.
 - Tools: `python3` 3.9 or newer, `uv` (once, for `uv sync --frozen`), `ps`, `git`, and `seq`/`printf` (the oversized-entry step). `ss` (Linux) or `lsof` (macOS) is optional; without either, doctor reports the port owner as unknown.
 - Proxy variables (`http_proxy`, `HTTP_PROXY`, `ALL_PROXY`, ...) can stay set: the helper's own requests never use a proxy, and the processes it starts do not get them. Everything binds and talks to 127.0.0.1.
+- The sandbox must permit `ps` process inspection for doctor and cleanup. If it refuses `ps`, rerun with process-inspection permission; keep the ownership checks intact.
 
 ## Launch
 
 Once per checkout: `uv sync --frozen` in the repo root (creates `.venv`; the helper uses `.venv/bin/python -m typed_decisions.cli`, so it always runs this checkout's code).
+
+Use the uv range in `pyproject.toml`. If the shell's uv is older, `uv tool run --from 'uv==0.12.24' uv sync --frozen` uses the pinned release without replacing it globally. For a full map pass, add `--extra openai-decisions` to the sync command before launching; this installs the official SDK for the local Decisions fixture.
 
 Each verification run gets its own id, scratch directory, and evidence directory, so runs can coexist:
 
@@ -48,11 +51,14 @@ Read-only. Exit 0 and `"ok": true` only if this checkout's package is the one im
 
 ## Drive
 
-Two drivers, both record evidence under the step name you give (`feature/step`) and exit non-zero when an expectation fails:
+Drivers record evidence under the step name you give (`feature/step`) and exit non-zero when an expectation fails:
 
 - HTTP: `$S post NAME STEP [--model ID] [--body FILE | --raw-body TEXT] [--method GET --path /v1/models] [--header "Name: value"] [--via TEXT | --via-bytes HEX] [--expect-status N] [--check EXPR]`. It sends one raw HTTP/1.1 request to the instance (the default body is `examples/support-ticket.json` with `model` replaced), so it can send header bytes an HTTP client would refuse: `--via-bytes 636166e9` sends `x-typed-decisions-via: caf\xe9`.
 - Upstream side: `$S requests TAP STEP [--check EXPR]` records what a tap has received so far; `out` is the list of requests (`out[-1]['headers']['x-typed-decisions-via']`, `out[-1]['body']['model']`).
 - CLI: `$S cli STEP [--env KEY=VALUE] [--stdin FILE] [--expect-exit N] [--check EXPR] [--timeout S] -- <td args>`. It runs `td <args>` from the repo root with the allowlisted env; `{port}` is a fresh free port (the same value everywhere in that call) and `{url:NAME}` an instance URL. A command still running after `--timeout` (default 30 s) is killed (its own process group) and reported as `"exit_code": "timeout"`, which is how a `serve` that should have refused to start shows up.
+- Python: `$S python STEP [the same options as cli] -- SCRIPT [args]`. It runs the script with this checkout's `.venv/bin/python`, the same environment allowlist, URL expansion, timeout, checks, and evidence capture. Use it for `scripts/client_probe.py`; that driver calls only the public clients, starts its own loopback provider fixtures, health-checks each fixture, and closes its sockets and joins its threads before returning.
+
+Run doctor after adding instances and before driving them. After a failed drive, capture evidence and run doctor again before another drive. Keep a shared healthy topology alive through the final re-proof, then clean up once all drives finish.
 
 `--check` takes a Python expression; `out` is the parsed JSON (the response body, or the last JSON object on stdout), plus `status` (post) or `code`, `events`, `stderr` (cli). Examples, all real:
 
@@ -72,12 +78,12 @@ Evidence for run `$VERIFY_RUN_ID` lives in `.verify-artifacts/verify-typed-decis
 
 - `run.json`: repo, git HEAD and dirty-file count, package version and path, python, and the names (never values) of variables in the agent's env whose names look secret (`TOKEN`, `KEY`, `SECRET`, `PASSWORD`).
 - `instances/<NAME>-launch.json` (command, env added, ready, stdout), `instances/<TAP>.requests.jsonl` (written live by each tap), and after cleanup `instances/<NAME>.stdout` / `.stderr` (the server's own logs).
-- `<feature>/<step>.json` per drive step: the exact request (method, URL, headers as escaped bytes, body) or command (argv, env added, stdin), the status or exit code, the parsed body or stdout, stderr tail, timing, each `--check` with its result, and `ok`.
+- `<feature>/<step>.json` per drive step: the exact request (method, URL, headers as escaped bytes, body) or command (argv, env added, stdin), the status or exit code, the parsed body or stdout, stderr tail, timing, each `--check` with its result, and `ok`. CLI and Python records also keep every parsed JSON stdout event in `events`, preserving fixture evidence when a later assertion fails.
 - `cleanup.json`: per instance, the signal sent, seconds to exit, exit code (143 is a clean SIGTERM), whether the port was free afterwards, and `supervisor_gone` when the exit code could not be recorded.
 - `notes.md`: anything you add with `$S note "text"`.
 
 Proof standards:
-- Drive the real user path: the `td` CLI or HTTP against a real `td serve`. No test-only endpoints, no internal calls. Upstreams are real `td serve` processes; the only mocked boundary is that no hosted service is called (no key reaches the servers).
+- Drive the real user path: the `td` CLI, HTTP against a real `td serve`, or the public Python clients over real HTTP. No internal router calls or in-memory transports. Routing upstreams are real `td serve` processes. Client fixtures replace external providers only, with their requests and replies recorded; they do not prove hosted availability or model quality. No real key reaches any child process.
 - Record the action and the resulting state: the request and its response, the command and its exit code plus stdout. For the proxy path, show both the relabelled answer (`model` is the router id, `upstream_model` the upstream's) and the request the upstream received (`$S requests TAP ...`: model name and hop chain).
 - Check side effects, not just the reply: a refused request must not reach the upstream (the tap's request count is unchanged), a refused `serve` must exit, not listen (`cli` exit code, no timeout), and cleanup must leave the ports free.
 - Report each entry point listed in the feature file as verified, failed, or not reached (with the command tried). Never report one entry point as verified through another.
@@ -104,11 +110,14 @@ Stops only the instances (servers and taps) this run launched, newest first. For
 | `$S doctor` | read-only health of this run's instances |
 | `$S post NAME STEP [...]` | one raw HTTP request, recorded |
 | `$S cli STEP [...] -- <td args>` | one `td` command, recorded |
+| `$S python STEP [...] -- SCRIPT [args]` | one public-client drive in checkout Python, recorded |
 | `$S note "text"` | append to `notes.md` |
 | `$S evidence` | print the evidence directory |
 | `$S cleanup` | stop this run's instances, keep evidence |
 | `$S runs` | list runs with scratch state left |
 
 To compare against another checkout (for example `master`, to show a bug before its fix), point the helper at it: `VERIFY_REPO=/path/to/other-checkout VERIFY_ARTIFACTS=$PWD/.verify-artifacts/verify-typed-decisions $S init` and so on; that checkout needs its own `uv sync --frozen`.
+
+`scripts/client_probe.py` is executable and is driven through `$S python`, as documented in `features/clients.md`. Its `jev` case uses an existing run server; `decisions` and `limits` each own and tear down their temporary provider fixtures inside the drive.
 
 Keep this skill and `features/` honest as the app changes with `/maintain-verification-skill`.

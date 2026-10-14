@@ -11,15 +11,16 @@
 
 ## How to get to it (user POV)
 
-- Run `td compare <request.json> -t <target> [-t <target> ...]` (the body's `model` is ignored).
+- Run `td compare <request.json> -t <target> [-t <target> ...]`. Catalog and LLM targets select their own model. A URL target uses `#model` when supplied, otherwise the body's `model`.
 
 ## Driving it with verify.py
 
 Preconditions:
 
-- A run is initialized and router B is launched (`$S launch B -- --model uniform-baseline`).
+- A run is initialized with baseline B and tap T. `$S doctor` reports `"ok": true`.
 
-- **Catalog and URL.** Run `$S cli compare/ok --expect-exit 0 --check "[r['ok'] for r in out['results']]==[True, True]" --check "out['questions']['department']['agree'] is True" --check "out['questions']['is_urgent']['spread']==0.0" -- compare examples/support-ticket.json -t uniform-baseline -t "url:{url:B}#uniform-baseline"`.
+- **Catalog and URL.** Run `$S cli compare/ok --expect-exit 0 --check "[r['ok'] for r in out['results']]==[True, True]" --check "out['questions']['department']['agree'] is True" --check "out['questions']['is_urgent']['spread']==0.0" --check "out['questions']['frustration']['spread']==0.0" -- compare examples/support-ticket.json -t uniform-baseline -t "url:{url:T}#uniform-baseline"`. Capture `$S requests T compare/url-upstream --check "out[-1]['body']['model']=='uniform-baseline'"`.
+- **Bare URL.** The example names `jev-latest`. Run `$S cli compare/bare-url --expect-exit 5 --check "out['results'][0]['error']['code']=='backend_failed'" --check "'404' in out['results'][0]['error']['message']" -- compare examples/support-ticket.json -t "url:{url:T}"`, then `$S requests T compare/bare-upstream --check "out[-1]['body']['model']=='jev-latest'"`. B serves only `uniform-baseline`, so this proves that omitting `#model` preserves the body model.
 - **A failing target.** Run `$S cli compare/partial --expect-exit 5 --check "[r['target'] for r in out['results']]==['uniform-baseline','jev-latest']" --check "out['results'][1]['error']['code']=='backend_unavailable'" --check "out['results'][0]['ok'] is True" -- compare examples/support-ticket.json -t uniform-baseline -t jev-latest`.
 - **Unreachable URL.** Run `$S cli compare/dead-url --expect-exit 5 --check "out['results'][0]['error']['code']=='backend_unavailable'" -- compare examples/support-ticket.json -t "url:http://127.0.0.1:{port}#x"`. `{port}` is free, so nothing listens there.
 

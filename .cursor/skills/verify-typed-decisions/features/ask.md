@@ -19,12 +19,13 @@
 
 Preconditions:
 
-- A run is initialized. `ask-url` and `ask-upstream` need baseline router B (`$S launch B -- --model uniform-baseline`).
+- A run is initialized. `ask-url` and `ask-upstream` need baseline router B and tap T. Run `$S doctor` before driving.
 
 - **File.** Run `$S cli ask/file --expect-exit 0 --check "out['model']=='uniform-baseline'" --check "out['answers']['is_urgent']['noul']==0.5" -- ask examples/support-ticket.json --model uniform-baseline`.
 - **Stdin.** Run `$S cli ask/stdin --stdin examples/support-ticket.json --expect-exit 0 --check "out['answers']['frustration']['score']==1.0" -- ask --model uniform-baseline`.
-- **Running server.** Run `$S cli ask/url --expect-exit 0 --check "out['model']=='uniform-baseline'" -- ask examples/support-ticket.json --url {url:B} --model uniform-baseline`.
-- **Upstream in process.** Run `$S cli ask/upstream --expect-exit 0 --check "out['model']=='up'" --check "out['upstream_model']=='uniform-baseline'" -- ask examples/support-ticket.json --model up --upstream "up={url:B}#uniform-baseline"`.
+- **Running server.** Run `$S cli ask/url --expect-exit 0 --check "out['model']=='uniform-baseline'" -- ask examples/support-ticket.json --url {url:T} --model uniform-baseline`, then `$S requests T ask/url-upstream --check "out[-1]['body']['model']=='uniform-baseline'"`.
+- **Upstream in process.** Run `$S cli ask/upstream --expect-exit 0 --check "out['model']=='up'" --check "out['upstream_model']=='uniform-baseline'" -- ask examples/support-ticket.json --model up --upstream "up={url:T}#uniform-baseline"`, then `$S requests T ask/alias-upstream --check "out[-1]['body']['model']=='uniform-baseline'" --check "len(out[-1]['headers']['x-typed-decisions-via'].split(','))==1"`.
+- **Invalid JSON.** The helper supplies empty stdin when `--stdin` is absent. Run `$S cli ask/invalid-json --expect-exit 2 --check "out['error']['code']=='invalid_request'" -- ask - --model uniform-baseline`.
 - **Unknown model.** Run `$S cli ask/unknown --expect-exit 2 --check "out['error']['code']=='unknown_model'" -- ask examples/support-ticket.json --model nope`.
 - **No Jev key.** Run `$S cli ask/jev-no-key --expect-exit 3 --check "out['error']['code']=='backend_unavailable'" --check "'TYPESAFE_API_KEY' in out['error']['message']" -- ask examples/support-ticket.json`. The example's own model is `jev-latest`.
 
