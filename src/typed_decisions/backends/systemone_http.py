@@ -183,6 +183,8 @@ class SystemOneHTTP:
                     extra_body=request.extra or None,
                     extra_headers=headers,
                 )
+                if limits.oversized():
+                    raise BodyTooLarge(MAX_BODY_BYTES)
                 body = self._json(result.raw_http_response)
         except DeadlineExceeded as error:
             raise BackendUnavailable(
@@ -190,24 +192,30 @@ class SystemOneHTTP:
             ) from error
         except BodyTooLarge as error:
             raise BackendFailed(f"{self.name}: response body is larger than {MAX_BODY_BYTES} bytes.") from error
-        except TypeSafeAPIConnectionError as error:
+        except TypeSafeError as error:
+            if limits.oversized():
+                raise BackendFailed(f"{self.name}: response body is larger than {MAX_BODY_BYTES} bytes.") from error
+            self._raise_mapped(error)
+        if self.label and isinstance(body, dict) and body.get("model") != self.label:
+            body = {**body, "model": self.label, "upstream_model": body.get("model")}
+        return body
+
+    def _raise_mapped(self, error: TypeSafeError) -> None:
+        """The SDK's errors as this package's, with the messages unchanged."""
+        if isinstance(error, TypeSafeAPIConnectionError):
             raise BackendUnavailable(
                 f"{self.name}: cannot reach {self.base_url} ({error}). {self.hint}".strip()
             ) from error
-        except (TypeSafeUnprocessableEntityError, TypeSafeBadRequestError) as error:
+        if isinstance(error, (TypeSafeUnprocessableEntityError, TypeSafeBadRequestError)):
             raise InvalidRequest(f"{self.name}: upstream rejected the request: {error}") from error
-        except TypeSafeAPIResponseValidationError as error:
+        if isinstance(error, TypeSafeAPIResponseValidationError):
             raise BackendFailed(f"{self.name}: answer is outside the System One contract: {error}") from error
-        except TypeSafeAPIError as error:
+        if isinstance(error, TypeSafeAPIError):
             if error.status in (401, 403):
                 who = self.key_env or "the request"
                 raise BackendUnavailable(f"{self.name}: upstream rejected {who} (HTTP {error.status}).") from error
             raise BackendFailed(f"{self.name}: upstream returned HTTP {error.status}: {error}") from error
-        except TypeSafeError as error:
-            raise BackendUnavailable(f"{self.name}: {error}") from error
-        if self.label and isinstance(body, dict) and body.get("model") != self.label:
-            body = {**body, "model": self.label, "upstream_model": body.get("model")}
-        return body
+        raise BackendUnavailable(f"{self.name}: {error}") from error
 
     def _json(self, response: httpx2.Response) -> Any:
         """Only a body that does not decode is "not JSON"; any other ValueError (an encoding error while sending, for

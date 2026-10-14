@@ -127,3 +127,34 @@ def test_server_upstream_call_is_capped():
         "code": "backend_failed",
         "message": f"kev-4b: response body is larger than {MAX_BODY_BYTES} bytes.",
     }
+
+
+def test_httpx2_private_decoder_still_decodes_gzip():
+    from httpx2._decoders import MultiDecoder as Private
+
+    decoder = Private(["gzip"])
+    data = gzip.compress(b'{"ok": true}' * 1000)
+    assert b"".join(decoder.decode(data)) + b"".join(decoder.flush()) == b'{"ok": true}' * 1000
+    assert _limits.MultiDecoder is Private  # the guarded import picked it up
+
+
+def test_fallback_without_private_decoders_still_caps(monkeypatch):
+    monkeypatch.setattr(_limits, "MultiDecoder", None)
+    small = gzip.compress(json.dumps(ANSWER).encode())
+    backend = kev(lambda request: httpx2.Response(200, content=small, headers={"content-encoding": "gzip"}))
+    assert backend.evaluate(parse(REQUEST))["answers"] == ANSWER["answers"]  # httpx2 decodes as usual
+    bomb = gzip.compress(b"0" * (16 * 1024 * 1024))  # under the cap on the wire, over it decoded
+    backend = kev(lambda request: httpx2.Response(200, content=bomb, headers={"content-encoding": "gzip"}))
+    with pytest.raises(BackendFailed, match="larger than"):
+        backend.evaluate(parse(REQUEST))
+
+
+def test_guarded_import_rejects_a_changed_private_api(monkeypatch):
+    import httpx2._decoders as decoders
+
+    class Changed:
+        def __init__(self, encodings):
+            raise TypeError("new signature")
+
+    monkeypatch.setattr(decoders, "MultiDecoder", Changed)
+    assert _limits._load_decoder() is None

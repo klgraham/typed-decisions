@@ -78,6 +78,7 @@ Main cost: running a local model through the router means running the upstream s
 - `answers.py`: `Request` and `Option` are frozen Pydantic models; `parse` validates a body as a `Request` (every failure is an `InvalidRequest`, 422) with questions as SDK models (`typesafe_sdk.Noul | Choice | Score`) at the boundary; `options(question)` and `answer(question, probabilities)`. Shared by every adapter.
 - `backends/`: `Backend` protocol `evaluate(body) -> response`, plus `systemone_http.py`, `clef.py`, `cua.py`, `tev1_together.py`, `uniform.py`. Heavy imports happen inside `load()`, so the core install needs no torch.
 - `_router.py` (private): id to backend, `evaluate`, `models`. Raises `InvalidRequest`, `UnknownModel`, `BackendUnavailable`, `BackendFailed`; HTTP and CLI map those to status codes and exit codes in one place each.
+- `backends/_limits.py`: one total deadline per upstream call (retries and body read included; 60 s hosted Jev, 300 s local upstreams) and a 10 MiB cap on decoded body bytes, via httpx2 event hooks.
 - `_server.py` (private): FastAPI app over a `Router`, optional Bearer via `TYPED_DECISIONS_API_KEY`.
 - `launch.py`: start upstream commands, wait for readiness, stop them on exit.
 - `compare.py`: run one body through several backends (catalog ids, `llm:<provider>:<model>` via `system-one-adapter`, or `url:<base>`), and report per-question agreement.

@@ -29,7 +29,9 @@ client = TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8080", model
 print(client.system_one(state="I was charged twice.", questions={"refund": Noul(instructions="Refund request?")}).nouls)
 ```
 
-Where a model already ships a System One server (Perplexity, OpenJev, Kev, Tev1 on Ollama), the server forwards to it. Only Clef, CUA, and Tev1 on Together are adapted in process. [docs/design.md](docs/design.md) explains why. `td` is kept as an alias of `sys1`.
+Where a model already ships a System One server (Perplexity, OpenJev, Kev, Tev1 on Ollama), the server forwards to it. Only Clef, CUA, and Tev1 on Together are adapted in process. [docs/design.md](docs/design.md) explains why.
+
+Each upstream call the server makes has a total deadline that includes retries and reading the body: 60 s for hosted Jev and 300 s for local upstreams (`--upstream` and the catalog's System One servers). Past it the request fails with `backend_unavailable` (HTTP 503); a body over 10 MiB decoded (gzip included) fails with `backend_failed` (HTTP 502). `td` is kept as an alias of `sys1`.
 
 ## Jev
 

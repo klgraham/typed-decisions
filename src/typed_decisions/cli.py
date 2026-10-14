@@ -1,4 +1,6 @@
-"""`td` (the typed-decisions CLI): list, serve, ask, compare, download. JSON on stdout; the exit code says what happened.
+"""`sys1`: serve decision models over the System One API, and list, ask, compare, download.
+
+JSON on stdout; the exit code says what happened.
 
 Exit codes:
   0  success
@@ -148,7 +150,7 @@ def _close(sockets: list[socket.socket]) -> None:
 def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -> None:
     """Serve on the sockets `_bind` already listens on. An OSError before startup is still reported as the port (2),
     though `_bind` leaves nothing for uvicorn to bind. Any other startup failure (uvicorn exits with its
-    STARTUP_FAILURE, 3, which would read as td's backend unavailable) is the app failing to start: a bug, 1, with
+    STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app failing to start: a bug, 1, with
     uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests;
     `stopped_by_exit_signals` requests shutdown without interrupting the event loop's callback dispatch."""
     import uvicorn
