@@ -12,9 +12,9 @@ Python SDK generates from OpenAI's OpenAPI spec (`openai.types.decision*`, opena
   `probabilities: [{value, label, probability}]`, `confidence`; any question may instead be `{type: "refusal", name}`.
 
 `confidence` is its own field: the guide's example has a top probability of 0.95 and a confidence of 0.93, so it is
-not derived from the distribution here. Choice and level count limits are not in OpenAI's docs and are not enforced
-(see docs/decisions-api.md); the limits OpenAI's API enforces (2-255 choices, 2-10 levels; confirmed live 2026-10-14)
-are checked here before anything is sent.
+not derived from the distribution here. The limits OpenAI's API enforces (2-255 choices, 2-10 levels, unique question
+names and choice values; not in OpenAI's docs, confirmed live 2026-10-14, see docs/decisions-api.md) are checked here
+before anything is sent.
 
 Requests go through the official SDK (`client.decisions.create`, openai>=3.26.0), installed with the
 `openai-decisions` extra; the core package imports without it.

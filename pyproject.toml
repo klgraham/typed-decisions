@@ -20,6 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # LLM comparison through TypeSafe's adapter. Pick the provider you will call.
+# Temporary freeze: "openai<3.25" keeps llm-openai on its tested 3.24.0; without it uv lock moves it to 3.31.0.
+# Lift once system-one-adapter[openai] is verified on openai>=3.25.
 llm-openai = ["system-one-adapter[openai]==0.2.1", "openai<3.25"]
 llm-anthropic = ["system-one-adapter[anthropic]==0.2.1"]
 llm-gemini = ["system-one-adapter[gemini]==0.2.1"]
