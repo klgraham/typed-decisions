@@ -1,10 +1,10 @@
 # typed-decisions verification map
 
-This directory is the maintained source for verifying the user-facing behavior of typed-decisions: the `td` CLI and the System One HTTP API that `td serve` exposes. Read this index before driving anything, then use the matching feature file as the recipe. `$S` is `python3 .cursor/skills/verify-typed-decisions/scripts/verify.py`, used unquoted (see `../SKILL.md`).
+This directory is the maintained source for verifying typed-decisions through the `td` CLI, its System One HTTP API, and the public Python clients. Read this index before driving anything, then use the matching feature file as the recipe. `$S` is `python3 .cursor/skills/verify-typed-decisions/scripts/verify.py`, used unquoted in Bash (see `../SKILL.md`).
 
 ## Baseline preconditions
 
-- Run from the repo root after `uv sync --frozen`; `.venv/bin/python` must exist.
+- Run from the repo root after `uv sync --frozen`; `.venv/bin/python` must exist. For all features, sync with `--extra openai-decisions` before launch. Use the uv version required by `pyproject.toml`.
 - Start a run with `eval "$($S init)"`; every later command uses that `VERIFY_RUN_ID`.
 - No real keys and no GPU: what the helper starts gets a minimal allowlisted environment (see `../SKILL.md`), so no key, token, proxy variable, or `SYSTEMONE_<ID>_URL/_MODEL` from your shell reaches it. Dummy values go in with `--env`.
 - Models that need nothing: `uniform-baseline` in process, and a second `td serve` as a System One upstream. Hosted Jev without a key is the standard "backend unavailable" negative.
@@ -14,7 +14,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Driving conventions
 
 - Start every recipe from the baseline unless its preconditions say otherwise.
-- HTTP goes through `$S post`, CLI through `$S cli`, upstream observations through `$S requests`. Step names are `<feature-file-stem>/<step>`.
+- HTTP goes through `$S post`, CLI through `$S cli`, public-client scripts through `$S python`, upstream observations through `$S requests`. Step names identify the feature and step.
 - Treat commands as literal. Keep quotes around `--upstream` values and `--check` expressions.
 - Assert on status codes, exit codes, `error.code`, and model ids; assert on message text only where a recipe says the message must name something.
 - Run `$S cleanup` at the end of every attempt, failed ones too. It never deletes evidence.
@@ -38,3 +38,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Ask](./ask.md): `td ask` in process, from stdin, and against a running server, with its exit codes.
 - [Compare](./compare.md): `td compare` across catalog, URL, and failing targets, with per-question agreement.
 - [Loop guards](./loop-guards.md): the self-loop refusal at startup, the `x-typed-decisions-via` hop guard, and hop-header validation (non-ASCII, oversized, malformed entries).
+- [Python clients](./clients.md): public Jev and Decisions clients, typed answers and refusal, credential isolation, and total-deadline and decoded-body limits over real loopback HTTP.

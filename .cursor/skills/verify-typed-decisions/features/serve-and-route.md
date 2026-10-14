@@ -30,13 +30,15 @@ Preconditions:
 - **Proxy.** Run `$S post A serve/proxy --model up --expect-status 200 --check "out['model']=='up'" --check "out['upstream_model']=='uniform-baseline'"`, then `$S requests T serve/proxy-upstream --check "out[-1]['body']['model']=='uniform-baseline'" --check "out[-1]['path']=='/v1/systemone'"`. The answer comes back as `up`; B received `model: uniform-baseline` and a one-entry `x-typed-decisions-via` (A's router id).
 - **Unknown model.** Run `$S post A serve/unknown --model nope --expect-status 404 --check "out['error']['code']=='unknown_model'"`.
 - **Bad body.** Run `$S post A serve/bad-json --raw-body '{not json' --expect-status 422 --check "out['error']['code']=='invalid_request'"`.
-- **Missing key.** Run `$S launch J -- --model jev-latest` and `$S post J serve/jev-no-key --model jev-latest --expect-status 503 --check "out['error']['code']=='backend_unavailable'" --check "'TYPESAFE_API_KEY' in out['error']['message']"`. Nothing is sent to TypeSafe.
-- **Auth.** Run `$S launch K --env TYPED_DECISIONS_API_KEY=dummy-verify-key -- --model uniform-baseline`, then `$S post K serve/no-auth --model uniform-baseline --expect-status 401 --check "out['error']['code']=='unauthorized'"` and `$S post K serve/auth --model uniform-baseline --header "Authorization: Bearer dummy-verify-key" --expect-status 200`.
+- **Missing key.** Run `$S launch J -- --model jev-latest`, then `$S doctor`, then `$S post J serve/jev-no-key --model jev-latest --expect-status 503 --check "out['error']['code']=='backend_unavailable'" --check "'TYPESAFE_API_KEY' in out['error']['message']"`. Nothing is sent to TypeSafe.
+- **Auth.** Run `$S launch K --env TYPED_DECISIONS_API_KEY=dummy-verify-key -- --model uniform-baseline`, then `$S doctor`, then `$S post K serve/no-auth --model uniform-baseline --expect-status 401 --check "out['error']['code']=='unauthorized'"` and `$S post K serve/auth --model uniform-baseline --header "Authorization: Bearer dummy-verify-key" --expect-status 200`.
+- **Public health and protected listing.** Run `$S post K serve/auth-health --method GET --path /health --expect-status 200`, `$S post K serve/models-no-auth --method GET --path /v1/models --expect-status 401`, and `$S post K serve/models-auth --method GET --path /v1/models --header "Authorization: Bearer dummy-verify-key" --expect-status 200`.
+- **Alias selection.** Run `$S launch U -- --upstream "up={url:T}#uniform-baseline"`, then `$S doctor` and `$S post U serve/unfiltered-alias --model up --expect-status 200 --check "out['model']=='up'"`. Capture `$S requests T serve/unfiltered-upstream --check "out[-1]['body']['model']=='uniform-baseline'"`. Launch `$S launch F -- --model uniform-baseline --upstream "up={url:T}#uniform-baseline"`, run `$S doctor`, then `$S post F serve/filtered-alias --model up --expect-status 404 --check "out['error']['code']=='unknown_model'"`. T's request count must stay unchanged.
 - **Stop.** Run `$S cleanup`. `cleanup.json` shows `exit_code: 143` and `port_free_after: true` for every instance.
 
 ## Gotchas
 
-- `--model` limits what is served, `--upstream` names included: `--upstream up=...` without `--model up` gives 404 `unknown_model` for `up`.
+- With no `--model` filter, every catalog model and custom upstream alias is served. Once any `--model` is given, include each alias you want to serve.
 - An `--upstream` NAME cannot be a catalog id (exit 2); use `SYSTEMONE_<ID>_URL` (via `--env`) to move a catalog model instead.
 - A non-loopback `--host` is refused without `TYPED_DECISIONS_API_KEY` or `--allow-unauthenticated`; the helper always binds 127.0.0.1.
 - `serve` prints no access log (warning level). Use a tap to see forwarded requests.

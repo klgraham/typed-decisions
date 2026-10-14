@@ -468,7 +468,8 @@ def cmd_cli(args: argparse.Namespace) -> None:
     save_state(state)
     argv = [expand(a, state, port) for a in args.td_args]
     env = child_env([expand(e, state, port) for e in args.env])
-    cmd = [python(), "-m", "typed_decisions.cli", *argv]
+    prefix = [python()] if args.command == "python" else [python(), "-m", "typed_decisions.cli"]
+    cmd = [*prefix, *argv]
     stdin = (REPO / args.stdin).read_bytes() if args.stdin else b""
     started = time.monotonic()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE, env=env,
@@ -487,8 +488,10 @@ def cmd_cli(args: argparse.Namespace) -> None:
     results = checks(args.check, {"out": out, "events": events, "code": code,
                                   "stderr": stderr.decode("utf-8", "replace")})
     ok = (args.expect_exit is None or code == args.expect_exit) and all(r["ok"] for r in results)
-    record = {"command": ["td", *argv], "env_added": [expand(e, state, port) for e in args.env],
+    record = {"command": ["python" if args.command == "python" else "td", *argv],
+              "env_added": [expand(e, state, port) for e in args.env],
               "stdin": args.stdin, "exit_code": code, "seconds": seconds, "stdout": out,
+              "events": events,
               "stderr": stderr.decode("utf-8", "replace")[-4000:], "expect_exit": args.expect_exit,
               "checks": results, "ok": ok}
     path = write_evidence(args.step, record)
@@ -613,14 +616,15 @@ def main() -> None:
     p.add_argument("--check", action="append", default=[], help="Python expression over out, status")
     p.add_argument("--timeout", type=float, default=30.0)
     p.set_defaults(run=cmd_post)
-    p = sub.add_parser("cli", help="run one td command with a scrubbed env and record it")
-    p.add_argument("step")
-    p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
-    p.add_argument("--stdin", help="file (relative to the repo) to feed on stdin")
-    p.add_argument("--expect-exit", type=int)
-    p.add_argument("--check", action="append", default=[], help="Python expression over out, events, code, stderr")
-    p.add_argument("--timeout", type=float, default=30.0)
-    p.set_defaults(run=cmd_cli)
+    for command in ("cli", "python"):
+        p = sub.add_parser(command, help=f"run one {command} command with a scrubbed env and record it")
+        p.add_argument("step")
+        p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
+        p.add_argument("--stdin", help="file (relative to the repo) to feed on stdin")
+        p.add_argument("--expect-exit", type=int)
+        p.add_argument("--check", action="append", default=[], help="Python expression over out, events, code, stderr")
+        p.add_argument("--timeout", type=float, default=30.0)
+        p.set_defaults(run=cmd_cli)
     p = sub.add_parser("note", help="append a line to the run's notes.md")
     p.add_argument("text", nargs="+")
     p.set_defaults(run=cmd_note)
@@ -634,7 +638,7 @@ def main() -> None:
         argv, rest = argv[:cut], argv[cut + 1:]
     args = parser.parse_args(argv)
     args.serve_args = args.cmd = args.td_args = rest
-    if args.command in ("cli", "_supervise") and not rest:
+    if args.command in ("cli", "python", "_supervise") and not rest:
         parser.error(f"{args.command} needs `-- <command and arguments>`")
     args.run(args)
 
