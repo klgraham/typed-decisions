@@ -1,6 +1,6 @@
 # Compare
 
-`sys1 compare` runs one request through several targets (catalog ids, any System One server as `url:<base_url>[#model]`, or an LLM as `llm:<provider>:<model>`), prints each target's result, and lines the answers up per question with `spread` for nouls and scores and `agree` for choices. One failing target does not stop the others; the exit code is 5 when any target failed.
+`td compare` runs one request through several targets (catalog ids, any System One server as `url:<base_url>[#model]`, or an LLM as `llm:<provider>:<model>`), prints each target's result, and lines the answers up per question with `spread` for nouls and scores and `agree` for choices. One failing target does not stop the others; the exit code is 5 when any target failed.
 
 ## Sub-features
 
@@ -11,7 +11,7 @@
 
 ## How to get to it (user POV)
 
-- Run `sys1 compare <request.json> -t <target> [-t <target> ...]` (the body's `model` is ignored).
+- Run `td compare <request.json> -t <target> [-t <target> ...]` (the body's `model` is ignored).
 
 ## Driving it with verify.py
 

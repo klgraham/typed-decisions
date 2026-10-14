@@ -15,12 +15,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from systemone_serve.backends.systemone_http import HOP_HEADER, MAX_HOPS, hop_chain
-from systemone_serve.errors import ServeError, scrub
-from systemone_serve.router import Router
+from typed_decisions.backends.systemone_http import HOP_HEADER, MAX_HOPS, hop_chain
+from typed_decisions.errors import ServeError, scrub
+from typed_decisions.router import Router
 
-SERVE_KEY_ENV = "SYSTEMONE_SERVE_API_KEY"
-log = logging.getLogger("systemone_serve")
+SERVE_KEY_ENV = "TYPED_DECISIONS_API_KEY"
+log = logging.getLogger("typed_decisions")
 
 
 def error_body(error: ServeError) -> dict[str, dict[str, str]]:
@@ -28,9 +28,9 @@ def error_body(error: ServeError) -> dict[str, dict[str, str]]:
 
 
 def create_app(router: Router, api_key: str | None = None) -> FastAPI:
-    """`api_key` defaults to SYSTEMONE_SERVE_API_KEY; unset means an open server, as kev.serve and the OpenJev shim do."""
+    """`api_key` defaults to TYPED_DECISIONS_API_KEY; unset means an open server, as kev.serve and the OpenJev shim do."""
     key = api_key if api_key is not None else os.environ.get(SERVE_KEY_ENV, "").strip()
-    app = FastAPI(title="systemone-serve")
+    app = FastAPI(title="typed-decisions")
 
     def unauthorized(request: Request) -> JSONResponse | None:
         if not key:

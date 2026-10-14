@@ -5,7 +5,7 @@ Kev (kev.serve), Tev1 (Ollama), and any URL added with `--upstream`. The SDK doe
 validation; the router then checks the answers against the request (`answers.validate`). A local upstream's body is
 returned as is, except that `model` becomes the router id and the upstream's own name moves to `upstream_model`.
 
-Every request to a local upstream carries `x-systemone-serve-via`: the routers it has passed through (`Request.via`,
+Every request to a local upstream carries `x-typed-decisions-via`: the routers it has passed through (`Request.via`,
 which the router appends itself to). A router refuses a request that already names it (see `server`), so an upstream
 URL that leads back to it, directly, through a hostname alias, or through another router, fails once instead of
 recursing. Router ids are tokens (letters, digits, `_`, `-`, at most HOP_ENTRY_MAX characters); a header with any other
@@ -30,13 +30,13 @@ from typesafe_sdk import (
     TypeSafeUnprocessableEntityError,
 )
 
-from systemone_serve.answers import Request
-from systemone_serve.catalog import TYPESAFE_URL, ModelSpec
-from systemone_serve.errors import BackendFailed, BackendUnavailable, InvalidRequest
+from typed_decisions.answers import Request
+from typed_decisions.catalog import TYPESAFE_URL, ModelSpec
+from typed_decisions.errors import BackendFailed, BackendUnavailable, InvalidRequest
 
 JEV_KEY_ENV = "TYPESAFE_API_KEY"
 NO_KEY = "local"
-HOP_HEADER = "x-systemone-serve-via"
+HOP_HEADER = "x-typed-decisions-via"
 MAX_HOPS = 8
 HOP_ENTRY_MAX = 64
 HOP_ENTRY = re.compile(rf"[A-Za-z0-9_-]{{1,{HOP_ENTRY_MAX}}}")
@@ -114,7 +114,7 @@ class SystemOneHTTP:
         url = spec.resolved_url()
         if not url:
             raise BackendUnavailable(f"{spec.id}: no upstream URL. Set {spec.url_env}.")
-        hint = f"Start it with `sys1 serve --model {spec.id} --launch`, or set {spec.url_env}."
+        hint = f"Start it with `td serve --model {spec.id} --launch`, or set {spec.url_env}."
         return cls(
             spec.id,
             url,

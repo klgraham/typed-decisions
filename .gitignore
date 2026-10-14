@@ -219,5 +219,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Evidence from the verify-systemone-serve skill (.cursor/skills/verify-systemone-serve)
+# Evidence from the verify-typed-decisions skill (.cursor/skills/verify-typed-decisions)
 .verify-artifacts/

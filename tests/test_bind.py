@@ -8,7 +8,7 @@ import socket
 import pytest
 from conftest import free_port
 
-from systemone_serve import cli
+from typed_decisions import cli
 
 
 @pytest.fixture

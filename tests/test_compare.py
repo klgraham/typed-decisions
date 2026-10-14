@@ -2,8 +2,8 @@ import json
 
 from system_one_adapter.providers import ProviderResult
 
-from systemone_serve.compare import LLM, run, summarize
-from systemone_serve.router import Router
+from typed_decisions.compare import LLM, run, summarize
+from typed_decisions.router import Router
 
 
 class FakeProvider:
@@ -28,7 +28,7 @@ class FakeProvider:
 
 
 def test_compare_local_baseline_jev_without_key_and_llm_through_real_adapter(body, monkeypatch):
-    import systemone_serve.compare as compare
+    import typed_decisions.compare as compare
 
     original = compare.resolve
 
@@ -59,6 +59,6 @@ def test_compare_local_baseline_jev_without_key_and_llm_through_real_adapter(bod
 
 
 def test_summary_without_successes_has_no_agreement(body):
-    from systemone_serve.answers import parse
+    from typed_decisions.answers import parse
 
     assert summarize(parse(body), [{"target": "x", "ok": False}])["department"] == {"type": "choice", "values": {}}

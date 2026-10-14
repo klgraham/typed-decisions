@@ -3,7 +3,7 @@
 import os
 from typing import Any
 
-from systemone_serve.errors import BackendUnavailable
+from typed_decisions.errors import BackendUnavailable
 
 DEVICE_ENV = "SYSTEMONE_DEVICE"
 

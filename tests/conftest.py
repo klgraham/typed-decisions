@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 import uvicorn
 
-from systemone_serve.router import Router
-from systemone_serve.server import create_app
+from typed_decisions.router import Router
+from typed_decisions.server import create_app
 
 BODY = {
     "state": "Help! My payouts have been failing for 3 days.",
@@ -51,7 +51,7 @@ def no_keys(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> 
         "TYPESAFE_API_KEY",
         "TYPESAFE_BASE_URL",
         "TOGETHER_API_KEY",
-        "SYSTEMONE_SERVE_API_KEY",
+        "TYPED_DECISIONS_API_KEY",
         "KEV_API_KEY",
         "AUTOJEV_API_KEY",
         "SHIM_TOKEN",

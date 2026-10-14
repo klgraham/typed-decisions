@@ -1,4 +1,4 @@
-"""`sys1` (the systemone-serve CLI): list, serve, ask, compare, download. JSON on stdout; the exit code says what happened.
+"""`td` (the typed-decisions CLI): list, serve, ask, compare, download. JSON on stdout; the exit code says what happened.
 
 Exit codes:
   0  success
@@ -22,9 +22,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from systemone_serve import catalog
-from systemone_serve.errors import InvalidRequest, ServeError, UnknownModel, scrub
-from systemone_serve.router import Router, upstream_spec
+from typed_decisions import catalog
+from typed_decisions.errors import InvalidRequest, ServeError, UnknownModel, scrub
+from typed_decisions.router import Router, upstream_spec
 
 PARTIAL = 5
 BACKLOG = 2048  # uvicorn's default
@@ -86,9 +86,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 def _ask_url(body: dict[str, Any], url: str) -> int:
     """Send to a running router (or any System One server) with the TypeSafe SDK, as any client would."""
-    from systemone_serve.answers import Request, parse
-    from systemone_serve.backends.systemone_http import SystemOneHTTP
-    from systemone_serve.server import SERVE_KEY_ENV
+    from typed_decisions.answers import Request, parse
+    from typed_decisions.backends.systemone_http import SystemOneHTTP
+    from typed_decisions.server import SERVE_KEY_ENV
 
     request: Request = parse(body)
     emit(SystemOneHTTP(url, url, None, key_env=SERVE_KEY_ENV).evaluate(request))
@@ -96,7 +96,7 @@ def _ask_url(body: dict[str, Any], url: str) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    from systemone_serve.compare import run
+    from typed_decisions.compare import run
 
     body = read_json(args.input)
     if not isinstance(body, dict):
@@ -107,7 +107,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def _same_address(url: str, host: str, port: int) -> bool:
-    from systemone_serve.launch import is_loopback
+    from typed_decisions.launch import is_loopback
 
     parsed = urlparse(url.partition("#")[0])
     if parsed.port != port:
@@ -148,13 +148,13 @@ def _close(sockets: list[socket.socket]) -> None:
 def _run_uvicorn(app: Any, host: str, port: int, sockets: list[socket.socket]) -> None:
     """Serve on the sockets `_bind` already listens on. An OSError before startup is still reported as the port (2),
     though `_bind` leaves nothing for uvicorn to bind. Any other startup failure (uvicorn exits with its
-    STARTUP_FAILURE, 3, which would read as sys1's backend unavailable) is the app failing to start: a bug, 1, with
+    STARTUP_FAILURE, 3, which would read as td's backend unavailable) is the app failing to start: a bug, 1, with
     uvicorn's reason on stderr. On a signal, uvicorn waits at most SHUTDOWN_GRACE seconds for in-flight requests;
     `stopped_by_exit_signals` requests shutdown without interrupting the event loop's callback dispatch."""
     import uvicorn
     from uvicorn.config import STARTUP_FAILURE
 
-    from systemone_serve.launch import stopped_by_exit_signals
+    from typed_decisions.launch import stopped_by_exit_signals
 
     server = uvicorn.Server(
         uvicorn.Config(app, host=host, port=port, log_level="warning", timeout_graceful_shutdown=SHUTDOWN_GRACE)
@@ -194,8 +194,8 @@ def _check_no_self_loop(router: Router, host: str, port: int) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    from systemone_serve.launch import is_loopback, launched
-    from systemone_serve.server import SERVE_KEY_ENV, create_app
+    from typed_decisions.launch import is_loopback, launched
+    from typed_decisions.server import SERVE_KEY_ENV, create_app
 
     authenticated = bool(os.environ.get(SERVE_KEY_ENV, "").strip())
     exposed = not is_loopback(args.host)
@@ -238,7 +238,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_download(args: argparse.Namespace) -> int:
-    from systemone_serve.backends._runtime import snapshot
+    from typed_decisions.backends._runtime import snapshot
 
     spec = catalog.BY_ID.get(args.model)
     if spec is None:
@@ -259,9 +259,7 @@ def cmd_download(args: argparse.Namespace) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(
-        prog="sys1", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    root = argparse.ArgumentParser(prog="td", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = root.add_subparsers(dest="command", required=True)
 
     sub.add_parser("models", help="List every model, its extra, hardware, URL, and readiness.").set_defaults(
@@ -288,7 +286,7 @@ def parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--allow-unauthenticated",
         action="store_true",
-        help="Allow a non-loopback --host without SYSTEMONE_SERVE_API_KEY (anyone reaching it spends your keys).",
+        help="Allow a non-loopback --host without TYPED_DECISIONS_API_KEY (anyone reaching it spends your keys).",
     )
     serve.set_defaults(run=cmd_serve)
 
@@ -340,7 +338,7 @@ def _leave_stuck_threads(code: int) -> None:
 
 
 def _run(args: argparse.Namespace) -> int:
-    from systemone_serve.launch import Terminated
+    from typed_decisions.launch import Terminated
 
     try:
         return args.run(args)

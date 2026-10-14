@@ -1,6 +1,6 @@
 # Model catalog
 
-`sys1 models` lists every model the router knows (12 today: three hosted Jev aliases, seven Hugging Face models, Tev1 on Together, and `uniform-baseline`) with its license, stack, hardware, whether its extra is installed here, where its upstream runs, which env vars move it, and whether its auth variable is set, plus a `hardware` summary of this machine.
+`td models` lists every model the router knows (12 today: three hosted Jev aliases, seven Hugging Face models, Tev1 on Together, and `uniform-baseline`) with its license, stack, hardware, whether its extra is installed here, where its upstream runs, which env vars move it, and whether its auth variable is set, plus a `hardware` summary of this machine.
 
 ## Sub-features
 
@@ -11,7 +11,7 @@
 
 ## How to get to it (user POV)
 
-- Run `sys1 models` (or `python -m systemone_serve.cli models`).
+- Run `td models` (or `python -m typed_decisions.cli models`).
 
 ## Driving it with verify.py
 

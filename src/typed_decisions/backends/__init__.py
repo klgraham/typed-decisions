@@ -2,8 +2,8 @@
 
 from typing import Any, Protocol
 
-from systemone_serve.answers import Request
-from systemone_serve.catalog import ModelSpec
+from typed_decisions.answers import Request
+from typed_decisions.catalog import ModelSpec
 
 
 class Backend(Protocol):
@@ -12,23 +12,23 @@ class Backend(Protocol):
 
 def build(spec: ModelSpec) -> Backend:
     if spec.kind in ("hosted-jev", "systemone-http"):
-        from systemone_serve.backends.systemone_http import SystemOneHTTP
+        from typed_decisions.backends.systemone_http import SystemOneHTTP
 
         return SystemOneHTTP.for_spec(spec)
     if spec.kind == "uniform":
-        from systemone_serve.backends.uniform import Uniform
+        from typed_decisions.backends.uniform import Uniform
 
         return Uniform(spec.id)
     if spec.kind == "clef":
-        from systemone_serve.backends.clef import Clef
+        from typed_decisions.backends.clef import Clef
 
         return Clef(spec)
     if spec.kind == "cua":
-        from systemone_serve.backends.cua import Cua
+        from typed_decisions.backends.cua import Cua
 
         return Cua(spec)
     if spec.kind == "tev1-together":
-        from systemone_serve.backends.tev1_together import Tev1Together
+        from typed_decisions.backends.tev1_together import Tev1Together
 
         return Tev1Together(spec)
     raise ValueError(f"Unknown backend kind {spec.kind!r}")

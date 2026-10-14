@@ -1,4 +1,4 @@
-# systemone-serve
+# typed-decisions
 
 This repo's only purpose is to serve decision models through a System One-compatible API so they are easy to evaluate against hosted Jev and against LLMs.
 
@@ -28,13 +28,13 @@ The API key comes only from the `TYPESAFE_API_KEY` environment variable. It is n
 
 ## Comparison with LLMs
 
-An LLM can approximate the same decisions by generating tokens. `sys1 compare` runs one question set against hosted Jev, any served decision model, and an LLM through [`system-one-adapter` 0.2.1](https://github.com/typesafe-ai/system-one-adapter-python), then lines the answers up per question.
+An LLM can approximate the same decisions by generating tokens. `td compare` runs one question set against hosted Jev, any served decision model, and an LLM through [`system-one-adapter` 0.2.1](https://github.com/typesafe-ai/system-one-adapter-python), then lines the answers up per question.
 
 ## Weights
 
-This repo does not provide model weights. Download them with Hugging Face tooling (`sys1 download <model>`, `hf download`, or the upstream server's own first-run download) and serve them locally. Licenses differ per model. Follow each model's license.
+This repo does not provide model weights. Download them with Hugging Face tooling (`td download <model>`, `hf download`, or the upstream server's own first-run download) and serve them locally. Licenses differ per model. Follow each model's license.
 
-Every Hugging Face snapshot is pinned to a commit SHA (`hf_revision` in `sys1 models`), because some of them contain code that runs here: Clef's `joint_schema_model.py`, Perplexity's server, OpenJev's shim, and vLLM's remote code. The SHAs are listed in [docs/serving-and-dependencies.md](docs/serving-and-dependencies.md#pinned-hugging-face-revisions).
+Every Hugging Face snapshot is pinned to a commit SHA (`hf_revision` in `td models`), because some of them contain code that runs here: Clef's `joint_schema_model.py`, Perplexity's server, OpenJev's shim, and vLLM's remote code. The SHAs are listed in [docs/serving-and-dependencies.md](docs/serving-and-dependencies.md#pinned-hugging-face-revisions).
 
 ## Models
 
@@ -63,33 +63,33 @@ uv sync --extra llm-openai       # + LLM comparison (also llm-anthropic, llm-gem
 uv sync --extra kev              # + one local model: pplx | openjev | openjev-mlx | kev | clef | cua
 ```
 
-The model extras conflict with each other (Kev needs torch < 2.9, Perplexity pins 2.14.0, vLLM pulls 2.13.0), so install one per environment. A router in one environment can still forward to upstreams running in others: set the upstream's URL env var (shown by `sys1 models`, e.g. `SYSTEMONE_KEV_4B_URL`).
+The model extras conflict with each other (Kev needs torch < 2.9, Perplexity pins 2.14.0, vLLM pulls 2.13.0), so install one per environment. A router in one environment can still forward to upstreams running in others: set the upstream's URL env var (shown by `td models`, e.g. `SYSTEMONE_KEV_4B_URL`).
 
 ## CLI
 
-The console command is `sys1` (`python -m systemone_serve.cli` runs the same thing). Every command prints JSON on stdout. Logs and upstream output go to stderr.
+The console command is `td` (`python -m typed_decisions.cli` runs the same thing). Every command prints JSON on stdout. Logs and upstream output go to stderr.
 
 ```bash
-sys1 models                                         # every model: extra installed?, URL, auth env set?, hardware
-sys1 serve --port 8080                              # route to all models (127.0.0.1 by default)
-sys1 serve --model kev-4b --launch                  # start kev.serve on :8008, then route to it
-sys1 ask examples/support-ticket.json               # route in this process, no server needed
-sys1 ask --model kev-4b < request.json              # body from stdin, model overridden
-sys1 ask request.json --url http://127.0.0.1:8080   # send to a running server
-sys1 compare examples/support-ticket.json \
+td models                                         # every model: extra installed?, URL, auth env set?, hardware
+td serve --port 8080                              # route to all models (127.0.0.1 by default)
+td serve --model kev-4b --launch                  # start kev.serve on :8008, then route to it
+td ask examples/support-ticket.json               # route in this process, no server needed
+td ask --model kev-4b < request.json              # body from stdin, model overridden
+td ask request.json --url http://127.0.0.1:8080   # send to a running server
+td compare examples/support-ticket.json \
     -t jev-latest -t kev-4b -t llm:openai:gpt-5-mini -t uniform-baseline
-sys1 download clef-flash                            # Hugging Face snapshot; prints the path
+td download clef-flash                            # Hugging Face snapshot; prints the path
 ```
 
 A local upstream's answer comes back under the router id (`"model": "kev-4b"`) with the upstream's own name in `upstream_model`. Every answer, local or proxied, is checked against the contract before it is returned (one answer per question, the right type, choice among the criteria, values in range, probabilities only for real options and summing to at most 1 plus a rounding allowance; an upstream that reports only its top-k options is fine). The allowance is half a unit in the last decimal place per reported option, at the precision the answer reports: the most decimals any of its values shows, counted as at least 2 (Jev reports 2, the OpenJev shim 4). It is never less than 0.02 and never more than 1, since rounding cannot push a sum past 2. A violation is `backend_failed`.
 
 `serve --launch` runs each upstream in its own process group with only the keys it needs (its own auth variable and `HF_TOKEN`). SIGTERM, SIGHUP, or Ctrl-C stops the whole group before exit, including during the readiness wait. A port that is already taken fails the launch instead of being mistaken for the new upstream. Each upstream listens on its URL's host (`SYSTEMONE_<ID>_URL` may name `127.0.0.1`, another `127.x` address, `localhost`, or `[::1]`), and the port check and readiness probe use that host too; an upstream that cannot listen there (the OpenJev shim is IPv4-only) is refused up front. One gap is left: if the router itself is SIGKILLed (or OOM-killed), no cleanup runs. On Linux each launched upstream still gets SIGTERM, but a process that upstream started (a grandchild) can survive, unless the upstream stops its own workers as `ollama serve` does. On other systems the upstreams themselves keep running.
 
-`serve` refuses a non-loopback `--host` (loopback is `localhost`, `127.0.0.0/8`, or `::1`; `0.0.0.0` and `::` listen on every interface, so they count as non-loopback; `::` is IPv6-only and does not answer on `127.0.0.1`) unless `SYSTEMONE_SERVE_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
+`serve` refuses a non-loopback `--host` (loopback is `localhost`, `127.0.0.0/8`, or `::1`; `0.0.0.0` and `::` listen on every interface, so they count as non-loopback; `::` is IPv6-only and does not answer on `127.0.0.1`) unless `TYPED_DECISIONS_API_KEY` is set or `--allow-unauthenticated` is passed, because an open router spends this machine's `TYPESAFE_API_KEY` and `TOGETHER_API_KEY` for whoever can reach it.
 
 `compare` targets are a catalog id, `llm:<provider>:<model>` (system-one-adapter; provider is `openai`, `anthropic`, or `gemini`, with that provider's own key env), or `url:<base_url>[#model]`. `--upstream NAME=URL[#MODEL]` adds any other System One server, such as [PostHog/jeeves](https://github.com/PostHog/jeeves) or Ollama's `nimble`. NAME cannot be a catalog id (set that model's `SYSTEMONE_<ID>_URL` instead). Precedence is the command line, then the environment, then the defaults: an `--upstream` URL and `#MODEL` win over `SYSTEMONE_<NAME>_URL` / `_MODEL`, and an `--upstream` without `#MODEL` takes `SYSTEMONE_<NAME>_MODEL` if set.
 
-`serve` refuses (exit 2) to start when any served model's resolved upstream URL is the router itself, whether it came from `--upstream`, `SYSTEMONE_<ID>_URL`, or the catalog default. A loop that address check cannot see (a host name alias, or two routers pointing at each other) is stopped by a hop header: each router adds its own id to `x-systemone-serve-via` when it forwards to a local upstream and answers HTTP 508 `loop_detected` to a request that already carries its id (or 8 hops), which the forwarding router reports as `backend_failed`. The header carries only router ids (ASCII letters, digits, `_` and `-`, at most 64 characters each); a request whose header has anything else is refused as `invalid_request` (422) before it is forwarded. On SIGTERM, SIGHUP, or Ctrl-C, `serve` waits at most 5 seconds for requests in flight and, after stopping any launched upstreams, at most 2 more for requests stuck on an upstream, then exits.
+`serve` refuses (exit 2) to start when any served model's resolved upstream URL is the router itself, whether it came from `--upstream`, `SYSTEMONE_<ID>_URL`, or the catalog default. A loop that address check cannot see (a host name alias, or two routers pointing at each other) is stopped by a hop header: each router adds its own id to `x-typed-decisions-via` when it forwards to a local upstream and answers HTTP 508 `loop_detected` to a request that already carries its id (or 8 hops), which the forwarding router reports as `backend_failed`. The header carries only router ids (ASCII letters, digits, `_` and `-`, at most 64 characters each); a request whose header has anything else is refused as `invalid_request` (422) before it is forwarded. On SIGTERM, SIGHUP, or Ctrl-C, `serve` waits at most 5 seconds for requests in flight and, after stopping any launched upstreams, at most 2 more for requests stuck on an upstream, then exits.
 
 Example `compare` output (trimmed):
 
@@ -125,9 +125,9 @@ Errors print `{"error": {"code": ..., "message": ...}}`; the server returns the 
 | Variable | Used for |
 | --- | --- |
 | `TYPESAFE_API_KEY` | hosted Jev, and nothing else |
-| `SYSTEMONE_SERVE_API_KEY` | optional Bearer key this server requires; unset means open, which `serve` allows only on loopback unless `--allow-unauthenticated` |
+| `TYPED_DECISIONS_API_KEY` | optional Bearer key this server requires; unset means open, which `serve` allows only on loopback unless `--allow-unauthenticated` |
 | `SYSTEMONE_<ID>_URL` | where an upstream runs, e.g. `SYSTEMONE_KEV_4B_URL`, `SYSTEMONE_OPENJEV_URL`; an `--upstream` URL wins over it |
-| `SYSTEMONE_<ID>_MODEL` | the model name sent to that upstream, e.g. `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL=tev1:4b-q4_K_M` for an Ollama tag other than `tev1`. Defaults: pplx `jev-latest`, OpenJev `openjev`, Ollama `tev1`, Kev `kev-latest`, Together `together/Tev1-4B-experimental`. `sys1 models` shows each `model_env` and the name in effect. Hosted Jev ignores it, as it ignores `SYSTEMONE_<ID>_URL` |
+| `SYSTEMONE_<ID>_MODEL` | the model name sent to that upstream, e.g. `SYSTEMONE_TEV1_4B_EXPERIMENTAL_MODEL=tev1:4b-q4_K_M` for an Ollama tag other than `tev1`. Defaults: pplx `jev-latest`, OpenJev `openjev`, Ollama `tev1`, Kev `kev-latest`, Together `together/Tev1-4B-experimental`. `td models` shows each `model_env` and the name in effect. Hosted Jev ignores it, as it ignores `SYSTEMONE_<ID>_URL` |
 | `KEV_API_KEY`, `AUTOJEV_API_KEY`, `SHIM_TOKEN` | Bearer keys the Kev, Perplexity, and OpenJev upstreams check; forwarded when set |
 | `TOGETHER_API_KEY`, `TOGETHER_MODEL` | `tev1-4b-experimental@together` (default model `together/Tev1-4B-experimental`; `SYSTEMONE_TEV1_4B_EXPERIMENTAL_TOGETHER_MODEL` wins over `TOGETHER_MODEL`) |
 | `SYSTEMONE_DEVICE`, `SYSTEMONE_DTYPE` | force the device or dtype of the in-process Clef and CUA backends |
@@ -147,4 +147,4 @@ uv run pytest
 To format code, run `uv run ruff format .`.
 Run these checks locally; this repository does not use GitHub Actions.
 
-The suite runs on a CPU-only machine with no weights and no keys: contract tests with fake backends, the TypeSafe SDK against a running router, the proxy with a mocked network, the adapters with fake models, `--launch` with a subprocess upstream, and the CLI. Live tests in `tests/test_live.py` skip unless their key, upstream URL, or `SYSTEMONE_LIVE_INPROCESS=1` is set. For an agent-driven check, see [skills/systemone-serve/SKILL.md](skills/systemone-serve/SKILL.md). To prove a change end to end the way a user would (real `sys1` processes, no keys, no GPU, evidence kept in `.verify-artifacts/`), use [.cursor/skills/verify-systemone-serve/SKILL.md](.cursor/skills/verify-systemone-serve/SKILL.md).
+The suite runs on a CPU-only machine with no weights and no keys: contract tests with fake backends, the TypeSafe SDK against a running router, the proxy with a mocked network, the adapters with fake models, `--launch` with a subprocess upstream, and the CLI. Live tests in `tests/test_live.py` skip unless their key, upstream URL, or `SYSTEMONE_LIVE_INPROCESS=1` is set. For an agent-driven check, see [skills/typed-decisions/SKILL.md](skills/typed-decisions/SKILL.md). To prove a change end to end the way a user would (real `td` processes, no keys, no GPU, evidence kept in `.verify-artifacts/`), use [.cursor/skills/verify-typed-decisions/SKILL.md](.cursor/skills/verify-typed-decisions/SKILL.md).

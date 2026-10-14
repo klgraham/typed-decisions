@@ -5,16 +5,16 @@ from dataclasses import dataclass
 
 import pytest
 
-from systemone_serve.answers import parse
-from systemone_serve.backends.clef import Clef
-from systemone_serve.backends.cua import Cua, screen_text
-from systemone_serve.backends.tev1_together import (
+from typed_decisions.answers import parse
+from typed_decisions.backends.clef import Clef
+from typed_decisions.backends.cua import Cua, screen_text
+from typed_decisions.backends.tev1_together import (
     Tev1Together,
     letter_probabilities,
     payload,
 )
-from systemone_serve.catalog import BY_ID
-from systemone_serve.errors import BackendUnavailable, InvalidRequest
+from typed_decisions.catalog import BY_ID
+from typed_decisions.errors import BackendUnavailable, InvalidRequest
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,7 @@ def test_tev1_payload_matches_upstream_decide_py():
             "questions": {"q": {"type": "noul", "instructions": "Is the return within the window?"}},
         }
     )
-    from systemone_serve.answers import options
+    from typed_decisions.answers import options
 
     sent = payload(
         request.state,

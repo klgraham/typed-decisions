@@ -1,8 +1,8 @@
 import pytest
 from typesafe_sdk import Choice, Noul, Score
 
-from systemone_serve.answers import Option, answer, options, parse
-from systemone_serve.errors import BackendFailed, InvalidRequest
+from typed_decisions.answers import Option, answer, options, parse
+from typed_decisions.errors import BackendFailed, InvalidRequest
 
 
 def test_parse_keeps_extra_fields_and_types_questions(body):

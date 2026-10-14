@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from systemone_serve.answers import parse
-from systemone_serve.backends import cua
-from systemone_serve.catalog import BY_ID
-from systemone_serve.errors import BackendUnavailable
+from typed_decisions.answers import parse
+from typed_decisions.backends import cua
+from typed_decisions.catalog import BY_ID
+from typed_decisions.errors import BackendUnavailable
 
 
 @pytest.fixture

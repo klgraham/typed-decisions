@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from systemone_serve.cli import main
+from typed_decisions.cli import main
 
 
 def run(capsys, *argv: str) -> tuple[int, dict]:
@@ -145,8 +145,8 @@ def test_download_model_without_weights_exits_2(capsys):
 
 
 def test_download_fetches_the_pinned_revision(capsys, monkeypatch):
-    from systemone_serve.backends import _runtime
-    from systemone_serve.catalog import BY_ID
+    from typed_decisions.backends import _runtime
+    from typed_decisions.catalog import BY_ID
 
     calls = []
     monkeypatch.setattr(
@@ -165,7 +165,7 @@ def test_bad_arguments_exit_2(capsys):
 
 
 def test_an_explicit_upstream_wins_over_its_env_vars(monkeypatch):
-    from systemone_serve.cli import build_router
+    from typed_decisions.cli import build_router
 
     monkeypatch.setenv("SYSTEMONE_ADHOC_URL", "http://env-host:9999")
     monkeypatch.setenv("SYSTEMONE_ADHOC_MODEL", "env-model")

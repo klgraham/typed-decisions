@@ -17,10 +17,10 @@ from pathlib import Path
 import pytest
 from conftest import free_port
 
-from systemone_serve import cli
-from systemone_serve.catalog import BY_ID, ModelSpec, Step
-from systemone_serve.errors import BackendUnavailable
-from systemone_serve.launch import child_env, launched, port_of
+from typed_decisions import cli
+from typed_decisions.catalog import BY_ID, ModelSpec, Step
+from typed_decisions.errors import BackendUnavailable
+from typed_decisions.launch import child_env, launched, port_of
 
 linux_only = pytest.mark.skipif(sys.platform != "linux", reason="reads /proc")
 
@@ -89,7 +89,7 @@ def serve(fake_ollama, never_ready: bool = False) -> tuple[subprocess.Popen, int
         [
             sys.executable,
             "-m",
-            "systemone_serve.cli",
+            "typed_decisions.cli",
             "serve",
             "--port",
             str(router_port),
@@ -236,13 +236,13 @@ def test_children_get_only_their_own_key(monkeypatch):
         ("TYPESAFE_API_KEY", "ts"),
         ("TOGETHER_API_KEY", "tg"),
         ("OPENAI_API_KEY", "oa"),
-        ("SYSTEMONE_SERVE_API_KEY", "sv"),
+        ("TYPED_DECISIONS_API_KEY", "sv"),
         ("KEV_API_KEY", "kev"),
         ("HF_TOKEN", "hf"),
     ]:
         monkeypatch.setenv(name, value)
     env = child_env(BY_ID["kev-4b"], {"PORT": "1"})
-    assert {"TYPESAFE_API_KEY", "TOGETHER_API_KEY", "OPENAI_API_KEY", "SYSTEMONE_SERVE_API_KEY"}.isdisjoint(env)
+    assert {"TYPESAFE_API_KEY", "TOGETHER_API_KEY", "OPENAI_API_KEY", "TYPED_DECISIONS_API_KEY"}.isdisjoint(env)
     assert (env["KEV_API_KEY"], env["HF_TOKEN"], env["PORT"]) == ("kev", "hf", "1")
     assert env["PATH"] == os.environ["PATH"]
 
@@ -288,14 +288,14 @@ def run(capsys, *argv) -> tuple[int, dict]:
 
 def test_unauthenticated_non_loopback_bind_is_refused(capsys, no_uvicorn):
     code, out = run(capsys, "serve", "--host", "0.0.0.0", "--port", str(free_port()))
-    assert code == 2 and "SYSTEMONE_SERVE_API_KEY" in out["error"]["message"]
+    assert code == 2 and "TYPED_DECISIONS_API_KEY" in out["error"]["message"]
     assert no_uvicorn == []
 
 
 def test_non_loopback_bind_with_key_or_explicit_flag(capsys, monkeypatch, no_uvicorn):
     code, out = run(capsys, "serve", "--host", "0.0.0.0", "--port", str(free_port()), "--allow-unauthenticated")
     assert code == 0 and (out["auth"], out["exposed"]) == (False, True)
-    monkeypatch.setenv("SYSTEMONE_SERVE_API_KEY", "a-long-serve-key")
+    monkeypatch.setenv("TYPED_DECISIONS_API_KEY", "a-long-serve-key")
     code, out = run(capsys, "serve", "--host", "0.0.0.0", "--port", str(free_port()))
     assert code == 0 and (out["auth"], out["exposed"]) == (True, True)
     code, out = run(capsys, "serve", "--port", str(free_port()))
@@ -318,10 +318,10 @@ def test_ipv6_loopback_is_loopback_and_ipv6_any_is_not(capsys, monkeypatch, no_u
     code, out = run(capsys, "serve", "--host", "::1", "--port", str(port))
     assert code == 0 and (out["exposed"], out["url"]) == (False, f"http://[::1]:{port}")
     code, out = run(capsys, "serve", "--host", "::", "--port", str(free_port()))
-    assert code == 2 and "SYSTEMONE_SERVE_API_KEY" in out["error"]["message"]
+    assert code == 2 and "TYPED_DECISIONS_API_KEY" in out["error"]["message"]
     code, out = run(capsys, "serve", "--host", "::", "--port", str(free_port()), "--allow-unauthenticated")
     assert code == 0 and (out["auth"], out["exposed"]) == (False, True)
-    monkeypatch.setenv("SYSTEMONE_SERVE_API_KEY", "a-long-serve-key")
+    monkeypatch.setenv("TYPED_DECISIONS_API_KEY", "a-long-serve-key")
     code, out = run(capsys, "serve", "--host", "::", "--port", str(free_port()))
     assert code == 0 and (out["auth"], out["exposed"]) == (True, True)
     assert [call["host"] for call in no_uvicorn] == ["::1", "::", "::"]
@@ -402,7 +402,7 @@ def test_a_listener_that_gets_in_first_is_exit_2_not_uvicorns_3(capsys, monkeypa
 
 
 def test_a_startup_failure_that_is_not_the_port_is_exit_1_not_cannot_listen(capsys, monkeypatch):
-    from systemone_serve import server
+    from typed_decisions import server
 
     async def fails_to_start(scope, receive, send):
         assert scope["type"] == "lifespan"
@@ -494,7 +494,7 @@ def test_sigterm_is_bounded_while_a_request_waits_on_a_hung_upstream():
     env = {**os.environ, "SYSTEMONE_KEV_4B_URL": f"http://127.0.0.1:{hung.getsockname()[1]}"}
     env.pop("TYPESAFE_API_KEY", None)
     process = subprocess.Popen(
-        [sys.executable, "-m", "systemone_serve.cli", "serve", "--port", str(port), "--model", "kev-4b"],
+        [sys.executable, "-m", "typed_decisions.cli", "serve", "--port", str(port), "--model", "kev-4b"],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -532,7 +532,7 @@ def test_sigterm_is_bounded_while_a_request_waits_on_a_hung_upstream():
 
 SWALLOWS_SIGNALS = """\
 import sys, time
-from systemone_serve import cli, server
+from typed_decisions import cli, server
 
 real = server.create_app
 
@@ -591,14 +591,14 @@ SIGNAL_DURING_DISPATCH = """\
 import asyncio, dataclasses, inspect, os, signal, sys
 from pathlib import Path
 import uvicorn
-from systemone_serve import cli, launch
-from systemone_serve.catalog import BY_ID, Step
-from systemone_serve.router import Router
+from typed_decisions import cli, launch
+from typed_decisions.catalog import BY_ID, Step
+from typed_decisions.router import Router
 
 port, upstream_port, pid_file, should_launch, signum = sys.argv[1:]
 spec = dataclasses.replace(BY_ID['uniform-baseline'],
     url=f'http://127.0.0.1:{upstream_port}',
-    launch=(Step(command=('{python}', '-m', 'systemone_serve.cli', 'serve',
+    launch=(Step(command=('{python}', '-m', 'typed_decisions.cli', 'serve',
                           '--model', 'uniform-baseline', '--port', '{port}'), ready_path='/health'),))
 cli.build_router = lambda args: Router([spec])
 real_start = launch.start
